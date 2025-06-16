@@ -253,17 +253,11 @@
             if (oldReferredBy !== newReferredBy) {
               if (oldReferredBy) {
                 const oldReferrerIndex = newClientsState.findIndex(c => c.id === oldReferredBy);
-                if (oldReferrerIndex > -1) {
-                  newClientsState[oldReferrerIndex] = { ...newClientsState[oldReferrerIndex], referredClients: newClientsState[oldReferrerIndex].referredClients.filter(id => id !== updatedClientData.id) };
-                }
+                if (oldReferrerIndex > -1) { newClientsState[oldReferrerIndex].referredClients = newClientsState[oldReferrerIndex].referredClients.filter(id => id !== updatedClientData.id); }
               }
               if (newReferredBy) {
                 const newReferrerIndex = newClientsState.findIndex(c => c.id === newReferredBy);
-                if (newReferrerIndex > -1) {
-                  const newReferrer = { ...newClientsState[newReferrerIndex] };
-                  if (!newReferrer.referredClients.includes(updatedClientData.id)) { newReferrer.referredClients.push(updatedClientData.id); }
-                  newClientsState[newReferrerIndex] = newReferrer;
-                }
+                if (newReferrerIndex > -1) { if (!newClientsState[newReferrerIndex].referredClients.includes(updatedClientData.id)) { newClientsState[newReferrerIndex].referredClients.push(updatedClientData.id); } }
               }
             }
         }
@@ -410,7 +404,7 @@
     };
 
     const ClientDetailView = ({ client, allClients, onUpdateClient, onDeleteClient, setGlobalLoadingMessage, isAiLoading }) => {
-      const { useState } = React;
+      const { useState, useEffect } = React;
       const [activeTab, setActiveTab] = useState('profile');
       const [showEditModal, setShowEditModal] = useState(false);
       const tabs = [{ id: 'profile', label: '档案与会话', icon: '👤' }, { id: 'conceptualization', label: 'AI个案概念化', icon: '📜' },{ id: 'supervision', label: 'AI督导', icon: '🔬' },{ id: 'analysis', label: '来访者评估', icon: '📊' }];
@@ -649,4 +643,3 @@
   </script>
 </body>
 </html>
-
