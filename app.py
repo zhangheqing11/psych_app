@@ -1,10 +1,16 @@
-# 安装必要的库: pip install Flask requests gunicorn
+# 安装必要的库: pip install Flask flask-cors requests gunicorn
 from flask import Flask, request, jsonify, send_from_directory, Response, make_response
+from flask_cors import CORS
 import requests
 import os
 
 # 初始化Flask应用
-app = Flask(__name__, static_folder='static')
+# 将静态文件夹设置为当前目录 ('.') 以便正确找到index.html
+app = Flask(__name__, static_folder='.')
+
+# --- CORS配置 ---
+# 允许来自任何来源的跨域请求，这对于本地开发是必须的
+CORS(app)
 
 # --- API 密钥配置 ---
 # 您的AI模型密钥，建议未来使用环境变量管理
@@ -14,12 +20,11 @@ DEEPSEEK_API_URL = "https://api.deepseek.com/chat/completions"
 # --- 路由定义 ---
 
 # 根路由: 提供前端应用
-# 当用户访问网站根目录时，直接发送 index.html
 @app.route('/')
 def serve_index():
+    # 从当前目录 (在上面被定义为 static_folder) 提供 index.html
+    # 添加 no-cache 头确保浏览器总是获取最新版本，这在开发中非常重要
     response = make_response(send_from_directory(app.static_folder, 'index.html'))
-    response.headers['Content-Type'] = 'text/html; charset=utf-8'
-    # 在开发中，这些头可以帮助防止浏览器缓存
     response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
     response.headers['Pragma'] = 'no-cache'
     response.headers['Expires'] = '0'
@@ -69,4 +74,3 @@ def call_ai_proxy():
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     app.run(host='0.0.0.0', port=port, debug=True)
-
