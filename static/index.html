@@ -23,47 +23,48 @@
   <script type="text/babel">
     // --- Helper function for API calls ---
     const callApi = async ({ systemPrompt, userPrompt, model = 'deepseek-chat', onChunk, onError }) => {
-        const isStreaming = onChunk && typeof onChunk === 'function';
-        // In a real app, this should call your backend, not directly the AI API
-        const apiURL = '/api/call-ai';
-        try {
-            const response = await fetch(apiURL, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ model, systemPrompt, userPrompt, stream: isStreaming }),
-            });
-            if (!response.ok) throw new Error(`API request failed with status ${response.status}`);
-            
-            if (isStreaming) {
-                const reader = response.body.getReader();
-                const decoder = new TextDecoder("utf-8");
-                let fullResponse = "";
-                while (true) {
-                  const { done, value } = await reader.read();
-                  if (done) break;
-                  const chunk = decoder.decode(value);
-                  const lines = chunk.split("\n");
-                  for (const line of lines) {
-                    if (line.startsWith("data: ")) {
-                      const dataStr = line.substring(6).trim();
-                      if (dataStr === "[DONE]") break;
-                      try {
-                        const data = JSON.parse(dataStr);
-                        const deltaContent = data.choices[0]?.delta?.content;
-                        if (deltaContent) { fullResponse += deltaContent; onChunk(deltaContent); }
-                      } catch (e) { console.error("Error parsing stream data:", e); }
-                    }
-                  }
+      const apiURL = '/api/call-ai';
+      const isStreaming = onChunk && typeof onChunk === 'function';
+
+      try {
+        const response = await fetch(apiURL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ model, systemPrompt, userPrompt, stream: isStreaming }),
+        });
+        if (!response.ok) throw new Error(`API request failed with status ${response.status}`);
+        
+        if (isStreaming) {
+            const reader = response.body.getReader();
+            const decoder = new TextDecoder("utf-8");
+            let fullResponse = "";
+            while (true) {
+              const { done, value } = await reader.read();
+              if (done) break;
+              const chunk = decoder.decode(value);
+              const lines = chunk.split("\n");
+              for (const line of lines) {
+                if (line.startsWith("data: ")) {
+                  const dataStr = line.substring(6).trim();
+                  if (dataStr === "[DONE]") return fullResponse;
+                  try {
+                    const data = JSON.parse(dataStr);
+                    const deltaContent = data.choices[0]?.delta?.content;
+                    if (deltaContent) { fullResponse += deltaContent; onChunk(deltaContent); }
+                  } catch (e) { console.error("Error parsing stream data:", e); }
                 }
-                return fullResponse;
-            } else {
-                 const data = await response.json();
-                 return data.choices[0].message.content;
+              }
             }
-        } catch (err) {
-            onError(err.message);
-            return `对后端服务器的API调用失败: ${err.message}`;
+            return fullResponse;
+        } else {
+             const data = await response.json();
+             return data.choices[0].message.content;
         }
+
+      } catch (err) {
+        onError(err.message);
+        return `对后端服务器的API调用失败: ${err.message}`;
+      }
     };
     
     const downloadTextAsFile = (content, filename) => {
@@ -246,27 +247,21 @@
         let newClientsState = [...clients];
         const oldClientState = newClientsState.find(c => c.id === updatedClientData.id);
         
-        if (oldClientState) { // Handle updates for existing client
+        if (oldClientState) {
             const oldReferredBy = oldClientState.referredBy;
             const newReferredBy = updatedClientData.referredBy;
-
             if (oldReferredBy !== newReferredBy) {
               if (oldReferredBy) {
                 const oldReferrerIndex = newClientsState.findIndex(c => c.id === oldReferredBy);
                 if (oldReferrerIndex > -1) {
-                  newClientsState[oldReferrerIndex] = {
-                    ...newClientsState[oldReferrerIndex],
-                    referredClients: newClientsState[oldReferrerIndex].referredClients.filter(id => id !== updatedClientData.id)
-                  };
+                  newClientsState[oldReferrerIndex] = { ...newClientsState[oldReferrerIndex], referredClients: newClientsState[oldReferrerIndex].referredClients.filter(id => id !== updatedClientData.id) };
                 }
               }
               if (newReferredBy) {
                 const newReferrerIndex = newClientsState.findIndex(c => c.id === newReferredBy);
                 if (newReferrerIndex > -1) {
                   const newReferrer = { ...newClientsState[newReferrerIndex] };
-                  if (!newReferrer.referredClients.includes(updatedClientData.id)) {
-                    newReferrer.referredClients.push(updatedClientData.id);
-                  }
+                  if (!newReferrer.referredClients.includes(updatedClientData.id)) { newReferrer.referredClients.push(updatedClientData.id); }
                   newClientsState[newReferrerIndex] = newReferrer;
                 }
               }
@@ -274,25 +269,20 @@
         }
         
         const clientIndex = newClientsState.findIndex(c => c.id === updatedClientData.id);
-        if (clientIndex > -1) { 
-            newClientsState[clientIndex] = updatedClientData; 
-        } else { // Handle new client
+        if (clientIndex > -1) { newClientsState[clientIndex] = updatedClientData; } 
+        else {
             newClientsState.push(updatedClientData);
             const newReferredBy = updatedClientData.referredBy;
             if (newReferredBy) {
                 const newReferrerIndex = newClientsState.findIndex(c => c.id === newReferredBy);
-                if (newReferrerIndex > -1) {
-                    if (!newClientsState[newReferrerIndex].referredClients.includes(updatedClientData.id)) {
-                        newClientsState[newReferrerIndex].referredClients.push(updatedClientData.id);
-                    }
+                if (newReferrerIndex > -1 && !newClientsState[newReferrerIndex].referredClients.includes(updatedClientData.id)) {
+                    newClientsState[newReferrerIndex].referredClients.push(updatedClientData.id);
                 }
             }
         }
         
         setClients(newClientsState);
-        if (selectedClient?.id === updatedClientData.id || !oldClientState) {
-          setSelectedClient(updatedClientData);
-        }
+        if (selectedClient?.id === updatedClientData.id || !oldClientState) { setSelectedClient(updatedClientData); }
         if (callback) callback(updatedClientData);
       };
 
@@ -420,7 +410,7 @@
     };
 
     const ClientDetailView = ({ client, allClients, onUpdateClient, onDeleteClient, setGlobalLoadingMessage, isAiLoading }) => {
-      const { useState, useEffect } = React;
+      const { useState } = React;
       const [activeTab, setActiveTab] = useState('profile');
       const [showEditModal, setShowEditModal] = useState(false);
       const tabs = [{ id: 'profile', label: '档案与会话', icon: '👤' }, { id: 'conceptualization', label: 'AI个案概念化', icon: '📜' },{ id: 'supervision', label: 'AI督导', icon: '🔬' },{ id: 'analysis', label: '来访者评估', icon: '📊' }];
@@ -659,3 +649,4 @@
   </script>
 </body>
 </html>
+
