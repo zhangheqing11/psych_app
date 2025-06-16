@@ -616,7 +616,7 @@
       const handleCBTInteraction = async (model) => {
           if (!userInput.trim()) { console.warn('请输入。'); return; }
           setIsLoading(true); setActiveModel(model); setError(null); setModelResponse(''); 
-          const systemPrompt = "你是一位专业的CBT心理咨询师。你的任务是以共情、支持和引导的方式与用户对话。帮助用户识别、挑战和重构他们的自动化负性思维。使用苏格拉底式提问，并提供关于CBT概念的心理教育。你必须使用中文进行回复。";
+          const systemPrompt = "现在是2025年，你是拥有10年临床经验的心理咨询师，擅长整合所有创伤聚焦的疗法帮助来访者，例如TF-CBT、叙事疗法、体感疗法SE、DBT、AEDP、IFS和积极心理学。请用温暖共情的语气，通过提问引导我自我觉察，必要时给出专业建议。请视情况使用倾听、共情、具体化、面质、解释、自我表露、指导等心理咨询面谈技术，利用苏格拉底式提问帮我引出心中的答案。每次说话不超过100字，使来访者能够消化内容。你必须使用中文进行回复。";
           await callApi({ systemPrompt, userPrompt: userInput, model, onChunk: (chunk) => setModelResponse(prev => prev + chunk), onError: (err) => setError(`抱歉，与AI模型通信失败: ${err}`) });
           setIsLoading(false); setActiveModel(null);
       };
