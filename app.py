@@ -6,15 +6,13 @@ import json
 
 # 初始化Flask应用
 app = Flask(__name__, static_folder='static')
-
-# 增加允许上传的文件大小限制
-app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024
+app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024 # 16MB file size limit
 
 # --- API 密钥配置 ---
 DEEPSEEK_API_KEY = "sk-44e1314da2d94b35b978f0fcd01ed26f"
 DEEPSEEK_API_URL = "https://api.deepseek.com/chat/completions"
 
-# --- PROMPTS ---
+# --- PROMPTS (完整版) ---
 def get_conceptualization_prompt_text():
     return """你是一位资深的心理咨询师。根据文件中的咨询逐字稿内容以及来访的基本信息，提供个案概念化报告。报告用于辅助另一位咨询师改善自己的咨询服务质量。个案概念化整体上应遵循‘’中的步骤：
 ‘	1.选择一个最适合来访者的理论范式,使用理论假设去指导个案概念化和治疗方案的建构
@@ -141,27 +139,24 @@ def get_supervision_prompt_text():
 * 区分观察事实与督导假设（使用『可能表明』『提示』等限定词）。
 * 整合至少2个理论视角（主体间性/依恋理论/关系精神分析等）。"""
 
-# --- 辅助函数：同步调用API ---
-def call_api_sync(system_prompt, user_prompt, model='deepseek-chat'):
+# --- 核心API调用函数 ---
+def call_deepseek_api(system_prompt, user_prompt, model='deepseek-chat', stream=False):
     headers = {'Content-Type': 'application/json', 'Authorization': f'Bearer {DEEPSEEK_API_KEY}'}
-    payload = {'model': model, 'messages': [{"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt}]}
+    payload = {'model': model, 'messages': [{"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt}], 'stream': stream}
     try:
-        response = requests.post(DEEPSEEK_API_URL, headers=headers, json=payload, timeout=180)
-        # 增强错误检查：检查响应是否OK
-        if not response.ok:
-            error_details = response.text
-            # 在服务器日志中打印更详细的错误
-            print(f"DeepSeek API Error: {response.status_code} - {error_details}")
-            # 抛出异常，以便上层函数可以捕获
-            response.raise_for_status() 
+        response = requests.post(DEEPSEEK_API_URL, headers=headers, json=payload, stream=stream, timeout=180)
+        response.raise_for_status()
         
-        data = response.json()
-        # 安全地访问返回的数据
-        content = data.get('choices', [{}])[0].get('message', {}).get('content')
-        if content is None:
-            print(f"Unexpected API response structure: {data}")
-            raise ValueError("AI response did not contain expected content.")
-        return content
+        if stream:
+            def generate():
+                for chunk in response.iter_content(chunk_size=None):
+                    if chunk: yield chunk
+            return Response(generate(), content_type=response.headers['Content-Type'])
+        else:
+            data = response.json()
+            content = data.get('choices', [{}])[0].get('message', {}).get('content')
+            if content is None: raise ValueError(f"AI response did not contain expected content: {data}")
+            return content
     except requests.exceptions.RequestException as e:
         print(f"Request to DeepSeek failed: {e}")
         return f"API调用失败: {e}"
@@ -169,30 +164,24 @@ def call_api_sync(system_prompt, user_prompt, model='deepseek-chat'):
         print(f"Error processing DeepSeek response: {e}")
         return f"处理AI响应时出错: {e}"
 
-# --- 路由 ---
-
+# --- 路由定义 ---
 @app.route('/')
 def serve_index():
-    response = make_response(send_from_directory(app.static_folder, 'index.html'))
-    response.headers['Content-Type'] = 'text/html; charset=utf-8'
-    return response
+    return send_from_directory(app.static_folder, 'index.html')
 
 @app.route('/api/upload-and-analyze', methods=['POST'])
 def upload_and_analyze():
-    if 'transcript' not in request.files:
-        return jsonify({"error": "请求中未找到文件"}), 400
+    if 'transcript' not in request.files: return jsonify({"error": "请求中未找到文件"}), 400
     file = request.files['transcript']
-    if file.filename == '':
-        return jsonify({"error": "未选择文件"}), 400
+    if file.filename == '': return jsonify({"error": "未选择文件"}), 400
 
     try:
         transcript_content = file.read().decode('utf-8')
-        client_info_json = request.form.get('client_info')
-        client_info = json.loads(client_info_json)
-        user_prompt_content = f"来访者基本信息:\n{json.dumps(client_info, indent=2, ensure_ascii=False)}\n\n咨询逐字稿内容:\n---\n{transcript_content}\n---"
+        client_info = json.loads(request.form.get('client_info'))
+        user_prompt = f"来访者基本信息:\n{json.dumps(client_info, indent=2, ensure_ascii=False)}\n\n咨询逐字稿内容:\n---\n{transcript_content}\n---"
         
-        conceptualization_content = call_api_sync(get_conceptualization_prompt_text(), user_prompt_content)
-        assessment_content = call_api_sync(get_assessment_prompt_text(), user_prompt_content)
+        conceptualization_content = call_deepseek_api(get_conceptualization_prompt_text(), user_prompt, stream=False)
+        assessment_content = call_deepseek_api(get_assessment_prompt_text(), user_prompt, stream=False)
 
         return jsonify({
             "success": True,
@@ -208,22 +197,9 @@ def upload_and_analyze():
 def generate_supervision():
     try:
         data = request.json
-        client_info_json = json.dumps(data.get('client_info'), indent=2, ensure_ascii=False)
-        transcript_content = data.get('transcript_content')
-        conceptualization_content = data.get('conceptualization_content')
-        assessment_content = data.get('assessment_content')
-
-        if not all([client_info_json, transcript_content, conceptualization_content, assessment_content]):
-            return jsonify({"error": "生成督导报告所需材料不完整"}), 400
-
-        user_prompt_for_supervision = f"来访者基本信息:\n{client_info_json}\n\n咨询逐字稿内容:\n{transcript_content}\n\nAI生成的个案概念化:\n{conceptualization_content}\n\nAI生成的来访者评估:\n{assessment_content}"
-        
-        supervision_content = call_api_sync(get_supervision_prompt_text(), user_prompt_for_supervision)
-
-        return jsonify({
-            "success": True,
-            "supervision": {"status": "Complete", "content": supervision_content}
-        })
+        prompt_for_supervision = f"来访者基本信息:\n{json.dumps(data.get('client_info'), indent=2, ensure_ascii=False)}\n\n咨询逐字稿内容:\n{data.get('transcript_content')}\n\nAI生成的个案概念化:\n{data.get('conceptualization_content')}\n\nAI生成的来访者评估:\n{data.get('assessment_content')}"
+        supervision_content = call_deepseek_api(get_supervision_prompt_text(), prompt_for_supervision, stream=False)
+        return jsonify({"success": True, "supervision": {"status": "Complete", "content": supervision_content}})
     except Exception as e:
         print(f"生成督导报告时出错: {e}")
         return jsonify({"error": f"服务器内部错误: {e}"}), 500
@@ -234,26 +210,9 @@ def call_ai_proxy():
     system_prompt = data.get('systemPrompt')
     user_prompt = data.get('userPrompt')
     model = data.get('model', 'deepseek-chat')
-    is_streaming = data.get('stream', True)
-
-    if not user_prompt or not system_prompt:
-        return jsonify({"error": "缺少必要的参数"}), 400
-
-    headers = {'Content-Type': 'application/json', 'Authorization': f'Bearer {DEEPSEEK_API_KEY}'}
-    payload = {'model': model, 'messages': [{"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt}], 'stream': is_streaming}
-    
-    try:
-        proxy_response = requests.post(DEEPSEEK_API_URL, headers=headers, json=payload, stream=True)
-        proxy_response.raise_for_status()
-        def generate():
-            for chunk in proxy_response.iter_content(chunk_size=None):
-                if chunk:
-                    yield chunk
-        return Response(generate(), content_type=proxy_response.headers['Content-Type'])
-    except requests.exceptions.RequestException as e:
-        return jsonify({"error": f"调用外部API失败: {e}"}), 502
+    if not user_prompt or not system_prompt: return jsonify({"error": "缺少必要的参数"}), 400
+    return call_deepseek_api(system_prompt, user_prompt, model=model, stream=True)
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     app.run(host='0.0.0.0', port=port, debug=True)
-
