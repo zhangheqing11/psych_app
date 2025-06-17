@@ -23,8 +23,7 @@
   <script type="text/babel">
     // --- Helper function for API calls ---
     const callApi = async ({ systemPrompt, userPrompt, model = 'deepseek-chat', onChunk, onError }) => {
-      // FIX: Changed relative URL to an absolute URL to prevent fetch errors.
-      const apiURL = 'http://127.0.0.1:5000/api/call-ai';
+      const apiURL = '/api/call-ai';
       const isStreaming = onChunk && typeof onChunk === 'function';
 
       try {
@@ -63,11 +62,7 @@
         }
 
       } catch (err) {
-        if (onError && typeof onError === 'function') {
-            onError(err.message);
-        } else {
-            console.error("callApi error (no onError handler provided):", err.message);
-        }
+        onError(err.message);
         return `对后端服务器的API调用失败: ${err.message}`;
       }
     };
@@ -97,7 +92,7 @@
             transcript: { name: '首次访谈逐字稿.docx', content: '模拟的逐字稿内容...' },
             conceptualization: { status: 'Complete', content: 'AI生成的个案概念化报告示例内容...' },
             assessment: { status: 'Complete', content: 'AI生成的来访者评估报告示例内容...' },
-            supervision: { status: 'Complete', content: 'AI生成的督导报告示例内容...' }
+            supervision: { status: 'Pending', conceptualizationUploaded: false, assessmentUploaded: false, content: null }
           },
         ]
       },
@@ -252,24 +247,37 @@
         let newClientsState = [...clients];
         const oldClientState = newClientsState.find(c => c.id === updatedClientData.id);
         
-        if (oldClientState) {
+        if (oldClientState) { // Handle updates for existing client
             const oldReferredBy = oldClientState.referredBy;
             const newReferredBy = updatedClientData.referredBy;
+
             if (oldReferredBy !== newReferredBy) {
               if (oldReferredBy) {
                 const oldReferrerIndex = newClientsState.findIndex(c => c.id === oldReferredBy);
-                if (oldReferrerIndex > -1) { newClientsState[oldReferrerIndex].referredClients = newClientsState[oldReferrerIndex].referredClients.filter(id => id !== updatedClientData.id); }
+                if (oldReferrerIndex > -1) {
+                  newClientsState[oldReferrerIndex] = {
+                    ...newClientsState[oldReferrerIndex],
+                    referredClients: newClientsState[oldReferrerIndex].referredClients.filter(id => id !== updatedClientData.id)
+                  };
+                }
               }
               if (newReferredBy) {
                 const newReferrerIndex = newClientsState.findIndex(c => c.id === newReferredBy);
-                if (newReferrerIndex > -1) { if (!newClientsState[newReferrerIndex].referredClients.includes(updatedClientData.id)) { newClientsState[newReferrerIndex].referredClients.push(updatedClientData.id); } }
+                if (newReferrerIndex > -1) {
+                  const newReferrer = { ...newClientsState[newReferrerIndex] };
+                  if (!newReferrer.referredClients.includes(updatedClientData.id)) {
+                    newReferrer.referredClients.push(updatedClientData.id);
+                  }
+                  newClientsState[newReferrerIndex] = newReferrer;
+                }
               }
             }
         }
         
         const clientIndex = newClientsState.findIndex(c => c.id === updatedClientData.id);
-        if (clientIndex > -1) { newClientsState[clientIndex] = updatedClientData; } 
-        else {
+        if (clientIndex > -1) { 
+            newClientsState[clientIndex] = updatedClientData; 
+        } else { // Handle new client
             newClientsState.push(updatedClientData);
             const newReferredBy = updatedClientData.referredBy;
             if (newReferredBy) {
@@ -281,7 +289,9 @@
         }
         
         setClients(newClientsState);
-        if (selectedClient?.id === updatedClientData.id || !oldClientState) { setSelectedClient(updatedClientData); }
+        if (selectedClient?.id === updatedClientData.id || !oldClientState) {
+          setSelectedClient(updatedClientData);
+        }
         if (callback) callback(updatedClientData);
       };
 
@@ -409,10 +419,65 @@
     };
 
     const ClientDetailView = ({ client, allClients, onUpdateClient, onDeleteClient, setGlobalLoadingMessage, isAiLoading }) => {
-      const { useState, useEffect } = React;
+      const { useState } = React;
       const [activeTab, setActiveTab] = useState('profile');
       const [showEditModal, setShowEditModal] = useState(false);
       const tabs = [{ id: 'profile', label: '档案与会话', icon: '👤' }, { id: 'conceptualization', label: 'AI个案概念化', icon: '📜' },{ id: 'supervision', label: 'AI督导', icon: '🔬' },{ id: 'analysis', label: '来访者评估', icon: '📊' }];
+      
+      const triggerAiGenerationIfNeeded = async (currentClient, sessionId) => {
+        const session = currentClient.sessions.find(s => s.id === sessionId);
+        if (session && session.transcript && session.conceptualization.status === 'Pending') {
+            setGlobalLoadingMessage(`正在为 ${currentClient.name} (会话: ${session.date}) 生成AI内容...`);
+            const sessionIndex = currentClient.sessions.findIndex(s => s.id === sessionId);
+            
+            let processingClient = JSON.parse(JSON.stringify(currentClient));
+            processingClient.sessions[sessionIndex].conceptualization.status = 'Processing';
+            processingClient.sessions[sessionIndex].assessment.status = 'Processing';
+            onUpdateClient(processingClient);
+
+            const userPromptContent = `来访者基本信息:\n姓名: ${client.name}\n年龄: ${client.age}\n性别: ${client.gender}\n在读年级: ${client.grade}\n性取向: ${client.sexualOrientation}\n既往病史: ${client.historyOfIllness}\n心理状态评分: ${client.mentalStateScore}/10\n残障情况: ${client.disabilityStatus}\n宗教信仰: ${client.religiousBelief}\n种族认同: ${client.ethnicIdentity}\n个人经济: ${client.personalFinance}\n家庭经济: ${client.familyFinance}\n\n文件内容摘要:\n咨询逐字稿: ${session.transcript.content}`;
+            
+            const conceptualizationPromise = callApi({ systemPrompt: getConceptualizationPrompt(), userPrompt: userPromptContent, model: 'deepseek-chat' });
+            const assessmentPromise = callApi({ systemPrompt: getAssessmentPrompt(), userPrompt: userPromptContent, model: 'deepseek-chat' });
+            const [conceptualizationResult, assessmentResult] = await Promise.all([conceptualizationPromise, assessmentPromise]);
+
+            let finalClient = JSON.parse(JSON.stringify(processingClient));
+            finalClient.sessions[sessionIndex].conceptualization = { status: conceptualizationResult.includes('API调用失败') ? 'Error' : 'Complete', content: conceptualizationResult };
+            finalClient.sessions[sessionIndex].assessment = { status: assessmentResult.includes('API调用失败') ? 'Error' : 'Complete', content: assessmentResult };
+
+            onUpdateClient(finalClient);
+            setGlobalLoadingMessage('');
+        }
+      };
+      
+      const handleAddSession = (newSessionData) => {
+        const newSession = { id: `session-${client.id}-${Date.now()}`, ...newSessionData, transcript: null, conceptualization: { status: 'Pending' }, assessment: { status: 'Pending' }, supervision: { status: 'Pending', conceptualizationUploaded: false, assessmentUploaded: false } };
+        onUpdateClient({ ...client, sessions: [...(client.sessions || []), newSession] });
+      };
+
+      const handleFileUpload = (sessionId, fileType, file) => {
+        const sessionIndex = client.sessions.findIndex(s => s.id === sessionId);
+        if (sessionIndex === -1) return;
+        const updatedClient = { ...client };
+        updatedClient.sessions[sessionIndex][fileType] = file;
+        onUpdateClient(updatedClient, (finalUpdatedClient) => {
+            triggerAiGenerationIfNeeded(finalUpdatedClient, sessionId);
+        });
+      };
+      
+      const handleSupervisionFileUploaded = (sessionId, fileType) => {
+          const sessionIndex = client.sessions.findIndex(s => s.id === sessionId);
+          if (sessionIndex === -1) return;
+          let updatedClient = JSON.parse(JSON.stringify(client));
+          updatedClient.sessions[sessionIndex].supervision[fileType + 'Uploaded'] = true;
+          
+          onUpdateClient(updatedClient, (finalUpdatedClient) => {
+              const finalSession = finalUpdatedClient.sessions.find(s => s.id === sessionId);
+              if(finalSession.supervision.conceptualizationUploaded && finalSession.supervision.assessmentUploaded && finalSession.supervision.status !== 'Complete' && finalSession.supervision.status !== 'Processing') {
+                  triggerSupervisionGeneration(finalUpdatedClient, sessionId);
+              }
+          });
+      };
       
       const triggerSupervisionGeneration = async (clientForSupervision, sessionId) => {
           setGlobalLoadingMessage(`正在为 ${clientForSupervision.name} (会话: ${clientForSupervision.sessions.find(s=>s.id === sessionId).date}) 生成AI督导报告...`);
@@ -437,59 +502,11 @@
           setGlobalLoadingMessage('');
       };
 
-      const triggerAiGenerationIfNeeded = async (currentClient, sessionId) => {
-        const session = currentClient.sessions.find(s => s.id === sessionId);
-        if (session && session.transcript && session.conceptualization.status === 'Pending') {
-            setGlobalLoadingMessage(`正在为 ${currentClient.name} (会话: ${session.date}) 生成AI内容...`);
-            const sessionIndex = currentClient.sessions.findIndex(s => s.id === sessionId);
-            
-            let processingClient = JSON.parse(JSON.stringify(currentClient));
-            processingClient.sessions[sessionIndex].conceptualization.status = 'Processing';
-            processingClient.sessions[sessionIndex].assessment.status = 'Processing';
-            onUpdateClient(processingClient);
-
-            const userPromptContent = `来访者基本信息:\n姓名: ${client.name}\n年龄: ${client.age}\n性别: ${client.gender}\n在读年级: ${client.grade}\n性取向: ${client.sexualOrientation}\n既往病史: ${client.historyOfIllness}\n心理状态评分: ${client.mentalStateScore}/10\n残障情况: ${client.disabilityStatus}\n宗教信仰: ${client.religiousBelief}\n种族认同: ${client.ethnicIdentity}\n个人经济: ${client.personalFinance}\n家庭经济: ${client.familyFinance}\n\n文件内容摘要:\n咨询逐字稿: ${session.transcript.content}`;
-            
-            const conceptualizationPromise = callApi({ systemPrompt: getConceptualizationPrompt(), userPrompt: userPromptContent, model: 'deepseek-chat' });
-            const assessmentPromise = callApi({ systemPrompt: getAssessmentPrompt(), userPrompt: userPromptContent, model: 'deepseek-chat' });
-            const [conceptualizationResult, assessmentResult] = await Promise.all([conceptualizationPromise, assessmentPromise]);
-
-            let finalClient = JSON.parse(JSON.stringify(processingClient));
-            finalClient.sessions[sessionIndex].conceptualization = { status: conceptualizationResult.includes('API调用失败') ? 'Error' : 'Complete', content: conceptualizationResult };
-            finalClient.sessions[sessionIndex].assessment = { status: assessmentResult.includes('API调用失败') ? 'Error' : 'Complete', content: assessmentResult };
-
-            onUpdateClient(finalClient, async (updatedClient) => {
-                setGlobalLoadingMessage('');
-                // FIX: Automation - If both reports are generated, automatically trigger supervision generation.
-                const sessionState = updatedClient.sessions[sessionIndex];
-                if (sessionState.conceptualization.status === 'Complete' && sessionState.assessment.status === 'Complete') {
-                    await triggerSupervisionGeneration(updatedClient, sessionId);
-                }
-            });
-        }
-      };
-      
-      const handleAddSession = (newSessionData) => {
-        const newSession = { id: `session-${client.id}-${Date.now()}`, ...newSessionData, transcript: null, conceptualization: { status: 'Pending' }, assessment: { status: 'Pending' }, supervision: { status: 'Pending' } };
-        onUpdateClient({ ...client, sessions: [...(client.sessions || []), newSession] });
-      };
-
-      const handleFileUpload = (sessionId, fileType, file) => {
-        const sessionIndex = client.sessions.findIndex(s => s.id === sessionId);
-        if (sessionIndex === -1) return;
-        const updatedClient = { ...client };
-        updatedClient.sessions[sessionIndex][fileType] = file;
-        onUpdateClient(updatedClient, (finalUpdatedClient) => {
-            triggerAiGenerationIfNeeded(finalUpdatedClient, sessionId);
-        });
-      };
-      
       const renderTabContent = () => {
         switch (activeTab) {
-          case 'profile': return <ClientProfileTab client={client} allClients={allClients} onAddSession={handleAddSession} onFileUpload={handleFileUpload} isAiLoading={isAiLoading} />;
+          case 'profile': return <ClientProfileTab client={client} allClients={allClients} onAddSession={handleAddSession} onFileUpload={handleFileUpload} onSupervisionFileUpload={handleSupervisionFileUploaded} isAiLoading={isAiLoading} />;
           case 'conceptualization': return <ConceptualizationTab client={client} />;
-          // FIX: Pass client prop to SupervisionReportTab
-          case 'supervision': return <SupervisionReportTab client={client} />;
+          case 'supervision': return <SupervisionReportTab client={client} onSupervisionFileUploaded={handleSupervisionFileUploaded} />;
           case 'analysis': return <AnalysisReportTab client={client} />;
           default: return null;
         }
@@ -505,43 +522,15 @@
       );
     };
     
-    const ClientProfileTab = ({ client, allClients, onAddSession, onFileUpload, isAiLoading }) => {
+    const ClientProfileTab = ({ client, allClients, onAddSession, onFileUpload, onSupervisionFileUpload, isAiLoading }) => {
       const { useState } = React;
       const [showAddSession, setShowAddSession] = useState(false);
       const [newSessionDate, setNewSessionDate] = useState(new Date().toISOString().split('T')[0]);
-      
-      const handleCreateSession = () => { 
-          if (!newSessionDate) return; 
-          onAddSession({ date: newSessionDate, summary: `关于 ${newSessionDate} 的咨询` }); 
-          setShowAddSession(false); 
-      };
-
-      // Real file upload handler
-      const handleRealFileUpload = (e, sessionId, fileType) => {
-        const file = e.target.files[0];
-        if (!file) return;
-
-        // Optional: Check for file type, for now assuming text-based files.
-        if (!file.type.startsWith('text/') && !file.name.endsWith('.txt') && !file.name.endsWith('.md')) {
-            alert('请上传文本文档 (e.g., .txt, .md)');
-            e.target.value = null; // Clear the file input
-            return;
-        }
-
-        const reader = new FileReader();
-        reader.onload = (event) => {
-            const content = event.target.result;
-            onFileUpload(sessionId, fileType, { name: file.name, content: content });
-        };
-        reader.onerror = () => {
-            console.error("无法读取文件");
-            alert("读取文件失败！");
-        };
-        reader.readAsText(file, 'UTF-8');
-        // Clear the file input value so the onChange event fires even if the same file is selected again
-        e.target.value = null;
-      };
-
+      const handleCreateSession = () => { if (!newSessionDate) return; onAddSession({ date: newSessionDate, summary: `关于 ${newSessionDate} 的咨询` }); setShowAddSession(false); };
+      const handleMockUpload = (sessionId, fileType) => {
+        const fileName = prompt(`模拟上传: 请输入 "咨询逐字稿" 的文件名:`);
+        if(fileName) onFileUpload(sessionId, fileType, { name: fileName, content: `这是文件"${fileName}"的模拟内容。` });
+      }
       const SessionCard = ({ session }) => {
         const status = session.conceptualization?.status === 'Processing' || session.assessment?.status === 'Processing' ? 'Processing' : 
                        (session.conceptualization?.status === 'Complete' && session.assessment?.status === 'Complete') ? 'Complete' : 'Pending';
@@ -550,29 +539,7 @@
                 <p className="font-semibold text-gray-800">咨询日期: {session.date}</p>
                 <div className="mt-3 p-3 bg-gray-50 rounded-md text-center">
                     <p className="text-sm font-medium text-gray-600">咨询逐字稿</p>
-                    {session.transcript ? (
-                      <div className="text-green-600 mt-1">
-                        <span className="text-xl">✅</span>
-                        <p className="text-xs break-all">{session.transcript.name}</p>
-                      </div>
-                    ) : (
-                      <>
-                        <input 
-                          type="file" 
-                          id={`transcript-upload-${session.id}`} 
-                          className="hidden" 
-                          onChange={(e) => handleRealFileUpload(e, session.id, 'transcript')}
-                          accept=".txt,.md,.text/*"
-                          disabled={isAiLoading}
-                        />
-                        <label 
-                          htmlFor={`transcript-upload-${session.id}`} 
-                          className={`mt-1 text-xs bg-indigo-500 text-white py-1 px-2 rounded ${isAiLoading ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer hover:bg-indigo-600'}`}
-                        >
-                          上传并生成AI内容
-                        </label>
-                      </>
-                    )}
+                    {session.transcript ? (<div className="text-green-600 mt-1"><span className="text-xl">✅</span><p className="text-xs break-all">{session.transcript.name}</p></div>) : (<button onClick={() => handleMockUpload(session.id, 'transcript')} disabled={isAiLoading} className="mt-1 text-xs bg-indigo-500 text-white py-1 px-2 rounded disabled:opacity-50">上传并生成AI内容</button>)}
                 </div>
                 {session.transcript && <div className="mt-3 text-center text-xs text-gray-500">✨ AI内容状态: <span className={status === 'Complete' ? 'text-green-600' : 'text-yellow-600'}>{status}</span></div>}
             </div>
@@ -615,83 +582,31 @@
             </div>
         );
     }
-    
-    // FIX: Reworked the SupervisionReportTab to be automated and simpler.
-    const SupervisionReportTab = ({ client }) => {
+    const SupervisionReportTab = ({ client, onSupervisionFileUploaded }) => {
         const { useState, useEffect } = React;
-        const aiSessions = (client.sessions || []).filter(s => s.supervision);
-        const [selectedSession, setSelectedSession] = useState(null);
-
-        useEffect(() => {
-            const sessionsWithSupervision = (client.sessions || []).filter(s => s.supervision).sort((a, b) => new Date(b.date) - new Date(a.date));
-            const currentSelectedStillExists = sessionsWithSupervision.some(s => s.id === selectedSession?.id);
-            if (currentSelectedStillExists) {
-                setSelectedSession(sessionsWithSupervision.find(s => s.id === selectedSession.id));
-            } else {
-                setSelectedSession(sessionsWithSupervision.length > 0 ? sessionsWithSupervision[0] : null);
-            }
-        }, [client]);
-
+        const aiSessions = (client.sessions || []).filter(s => s.transcript);
+        const [selectedSession, setSelectedSession] = useState(aiSessions.length > 0 ? aiSessions[0] : null);
+        useEffect(() => { const sessions = (client.sessions || []).filter(s => s.transcript); setSelectedSession(sessions.length > 0 ? sessions[0] : null); }, [client]);
         return (
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                <div className="md:col-span-1 bg-gray-50 p-4 rounded-lg border">
-                    <h3 className="text-lg font-medium text-gray-700 mb-3">督导历史</h3>
-                    <ul className="space-y-2 max-h-[60vh] overflow-y-auto pr-2">
-                        {aiSessions.length === 0 ? (
-                            <p className="text-sm text-gray-500 text-center py-4">上传逐字稿后将自动生成督导报告。</p>
-                        ) : (
-                            [...aiSessions].reverse().map(session => (
-                                <li 
-                                    key={session.id} 
-                                    onClick={() => setSelectedSession(session)} 
-                                    className={`p-3 rounded-lg cursor-pointer border-2 ${selectedSession?.id === session.id ? 'bg-blue-100 border-blue-500' : 'bg-white hover:bg-gray-100 border-transparent'}`}
-                                >
-                                    <p className="font-semibold text-blue-600">咨询日期: {session.date}</p>
-                                    <p className={`text-xs font-medium mt-1 ${
-                                        session.supervision.status === 'Complete' ? 'text-green-600' : 
-                                        session.supervision.status === 'Processing' ? 'text-yellow-600 animate-pulse' :
-                                        session.supervision.status === 'Error' ? 'text-red-600' :
-                                        'text-gray-500'
-                                    }`}>
-                                        状态: {session.supervision.status}
-                                    </p>
-                                </li>
-                            ))
-                        )}
-                    </ul>
-                </div>
-                <div className="md:col-span-2">
-                    <h3 className="text-lg font-medium mb-3 text-gray-700">AI督导报告详情</h3>
-                    {selectedSession ? (
-                        <div className="p-4 bg-white border rounded-lg h-full">
-                            <div className="flex justify-between items-center mb-2">
-                                <h4 className="font-bold text-lg text-blue-700">关于 {selectedSession.date} 咨询的AI督导报告</h4>
-                                {selectedSession.supervision.status === 'Complete' && (
-                                    <button 
-                                        onClick={() => downloadTextAsFile(selectedSession.supervision.content, `${client.name}_${selectedSession.date}_督导报告.txt`)} 
-                                        className="text-xs bg-gray-600 text-white py-1 px-2 rounded"
-                                    >
-                                        下载
-                                    </button>
-                                )}
-                            </div>
-                            <div className="whitespace-pre-wrap text-gray-800 bg-gray-50 p-3 mt-3 rounded-md overflow-y-auto max-h-[55vh]">
-                                {
-                                 selectedSession.supervision.status === 'Complete' ? selectedSession.supervision.content :
-                                 selectedSession.supervision.status === 'Processing' ? 'AI正在生成督导报告，请稍候...' :
-                                 selectedSession.supervision.status === 'Error' ? '生成督导报告时出错。' :
-                                 '等待个案概念化及评估报告生成...'
-                                }
-                            </div>
+                <div className="md:col-span-1 bg-gray-50 p-4 rounded-lg border"><h3 className="text-lg font-medium text-gray-700 mb-3">会话列表</h3><ul className="space-y-2 max-h-[60vh] overflow-y-auto pr-2">{aiSessions.length === 0 ? <p className="text-sm text-gray-500 text-center py-4">暂无会话。</p> : [...aiSessions].reverse().map(session => <li key={session.id} onClick={() => setSelectedSession(session)} className={`p-3 rounded-lg cursor-pointer border-2 ${selectedSession?.id === session.id ? 'bg-blue-100 border-blue-500' : 'bg-white hover:bg-gray-100 border-transparent'}`}><p className="font-semibold text-blue-600">咨询日期: {session.date}</p><p className={`text-xs font-medium mt-1 ${session.supervision.status === 'Complete' ? 'text-green-600' : 'text-yellow-600'}`}>{session.supervision.status}</p></li>)}</ul></div>
+                <div className="md:col-span-2"><h3 className="text-lg font-medium mb-3 text-gray-700">AI督导工作流</h3>{selectedSession ? <div className="p-4 bg-white border rounded-lg h-full space-y-4">
+                    <div className="p-3 bg-gray-50 rounded-md">
+                        <h4 className="text-md font-medium text-gray-700 mb-2">第1步: 上传AI生成的报告</h4>
+                        <div className="grid grid-cols-2 gap-4">
+                            <div><p className="text-sm text-center mb-1">个案概念化</p><button onClick={() => onSupervisionFileUploaded(selectedSession.id, 'conceptualization')} disabled={selectedSession.supervision.conceptualizationUploaded || selectedSession.conceptualization?.status !== 'Complete'} className="w-full text-xs bg-indigo-500 text-white py-1 px-2 rounded disabled:bg-gray-400">{selectedSession.supervision.conceptualizationUploaded ? '已上传✅' : '上传'}</button></div>
+                            <div><p className="text-sm text-center mb-1">来访者评估</p><button onClick={() => onSupervisionFileUploaded(selectedSession.id, 'assessment')} disabled={selectedSession.supervision.assessmentUploaded || selectedSession.assessment?.status !== 'Complete'} className="w-full text-xs bg-indigo-500 text-white py-1 px-2 rounded disabled:bg-gray-400">{selectedSession.supervision.assessmentUploaded ? '已上传✅' : '上传'}</button></div>
                         </div>
-                    ) : (
-                        <p className="text-gray-500 text-center pt-10">请从左侧选择记录查看。</p>
-                    )}
-                </div>
+                        <p className="text-xs text-gray-500 mt-2">请先确保概念化和评估报告已生成。上传后将自动触发最终督导报告生成。</p>
+                    </div>
+                    <div className="p-3 bg-gray-50 rounded-md">
+                        <h4 className="text-md font-medium text-gray-700 mb-2">第2步: 查看最终督导报告</h4>
+                        {selectedSession.supervision.status === 'Complete' ? <button onClick={()=>downloadTextAsFile(selectedSession.supervision.content, `${client.name}_${selectedSession.date}_督导报告.txt`)} className="text-sm bg-green-500 text-white py-2 px-4 rounded">下载督导报告</button> : <p className="text-sm text-gray-500">状态: {selectedSession.supervision.status}</p>}
+                    </div>
+                </div> : <p className="text-gray-500 text-center pt-10">请从左侧选择一个会话以开始督导流程。</p>}</div>
             </div>
         );
     };
-
 
     const AnalysisReportTab = ({ client }) => {
         const { useState, useEffect } = React;
@@ -716,7 +631,7 @@
       const handleCBTInteraction = async (model) => {
           if (!userInput.trim()) { console.warn('请输入。'); return; }
           setIsLoading(true); setActiveModel(model); setError(null); setModelResponse(''); 
-          const systemPrompt = "现在是2025年，你是拥有10年临床经验的心理咨询师，擅长整合所有创伤聚焦的疗法帮助来访者，例如TF-CBT、叙事疗法、体感疗法SE、DBT、AEDP、IFS和积极心理学。请用温暖共情的语气，通过提问引导我自我觉察，必要时给出专业建议。请视情况使用倾听、共情、具体化、面质、解释、自我表露、指导等心理咨询面谈技术，利用苏格拉底式提问帮我引出心中的答案。每次说话不超过100字，使来访者能够消化内容。你必须使用中文进行回复。";
+          const systemPrompt = "你是一位专业的CBT心理咨询师。你的任务是以共情、支持和引导的方式与用户对话。帮助用户识别、挑战和重构他们的自动化负性思维。使用苏格拉底式提问，并提供关于CBT概念的心理教育。你必须使用中文进行回复。";
           await callApi({ systemPrompt, userPrompt: userInput, model, onChunk: (chunk) => setModelResponse(prev => prev + chunk), onError: (err) => setError(`抱歉，与AI模型通信失败: ${err}`) });
           setIsLoading(false); setActiveModel(null);
       };
