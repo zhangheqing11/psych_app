@@ -161,21 +161,21 @@ def call_api_sync(system_prompt, user_prompt, model='deepseek-chat'):
         traceback.print_exc()
         raise
 
-def call_api_stream(system_prompt, user_prompt, model='deepseek-chat'):
-    """流式调用API，用于实现打字机效果。"""
-    app.logger.info(f"[STREAM_CALL_START] model={model}")
-    headers = {'Content-Type': 'application/json', 'Authorization': f'Bearer {DEEPSEEK_API_KEY}'}
-    payload = {'model': model, 'messages': [{"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt}], 'stream': True}
-    try:
-        proxy_response = requests.post(DEEPSEEK_API_URL, headers=headers, json=payload, stream=True, timeout=300)
-        proxy_response.raise_for_status()
-        def generate():
-            for chunk in proxy_response.iter_content(chunk_size=8192):
-                yield chunk
-        return Response(generate(), content_type=proxy_response.headers.get('Content-Type'))
-    except requests.exceptions.RequestException as e:
-        app.logger.error(f"[STREAM_CALL_ERROR] {e}")
-        return jsonify({"error": f"调用外部API失败: {e}"}), 502
+#def call_api_stream(system_prompt, user_prompt, model='deepseek-chat'):
+   # """流式调用API，用于实现打字机效果。"""
+    #app.logger.info(f"[STREAM_CALL_START] model={model}")
+    #headers = {'Content-Type': 'application/json', 'Authorization': f'Bearer {DEEPSEEK_API_KEY}'}
+    #payload = {'model': model, 'messages': [{"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt}], 'stream': True}
+    #try:
+        #proxy_response = requests.post(DEEPSEEK_API_URL, headers=headers, json=payload, stream=True, timeout=300)
+        #proxy_response.raise_for_status()
+        #def generate():
+            #for chunk in proxy_response.iter_content(chunk_size=8192):
+                #yield chunk
+        #return Response(generate(), content_type=proxy_response.headers.get('Content-Type'))
+    #except requests.exceptions.RequestException as e:
+        #app.logger.error(f"[STREAM_CALL_ERROR] {e}")
+        #return jsonify({"error": f"调用外部API失败: {e}"}), 502
 
 # --- 路由定义 ---
 @app.route('/')
