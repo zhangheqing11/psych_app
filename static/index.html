@@ -21,9 +21,91 @@
   <div id="root"></div>
 
   <script type="text/babel">
-    // (Omitted helper functions and data for brevity, they are the same as the last working version)
-    const downloadTextAsFile = (content, filename) => { /*...*/ };
-    const initialClients = [ /*...*/ ];
+    // --- Helper function for API calls ---
+    const callApi = async ({ systemPrompt, userPrompt, model = 'deepseek-chat', onChunk, onError }) => {
+      const apiURL = `${window.location.origin}/api/call-ai`;
+      const isStreaming = onChunk && typeof onChunk === 'function';
+
+      try {
+        const response = await fetch(apiURL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ model, systemPrompt, userPrompt, stream: isStreaming }),
+        });
+        if (!response.ok) throw new Error(`API request failed with status ${response.status}`);
+        
+        if (isStreaming) {
+            const reader = response.body.getReader();
+            const decoder = new TextDecoder("utf-8");
+            let fullResponse = "";
+            while (true) {
+              const { done, value } = await reader.read();
+              if (done) break;
+              const chunk = decoder.decode(value);
+              const lines = chunk.split("\n");
+              for (const line of lines) {
+                if (line.startsWith("data: ")) {
+                  const dataStr = line.substring(6).trim();
+                  if (dataStr === "[DONE]") return fullResponse;
+                  try {
+                    const data = JSON.parse(dataStr);
+                    const deltaContent = data.choices[0]?.delta?.content;
+                    if (deltaContent) { fullResponse += deltaContent; onChunk(deltaContent); }
+                  } catch (e) { console.error("Error parsing stream data:", e); }
+                }
+              }
+            }
+            return fullResponse;
+        } else {
+             const data = await response.json();
+             return data.choices[0].message.content;
+        }
+
+      } catch (err) {
+        onError(err.message);
+        return `对后端服务器的API调用失败: ${err.message}`;
+      }
+    };
+    
+    const downloadTextAsFile = (content, filename) => {
+        const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+    };
+
+    // --- Mock Initial Data ---
+    const initialClients = [
+      { 
+        id: 'client-001', name: '王芳', age: 32, gender: '女', grade: '在职', sexualOrientation: '异性恋',
+        contact: '138********', joinDate: '2023-10-15', referredBy: null, referredClients: ['client-002'],
+        historyOfIllness: '无重大既往史', mentalStateScore: 7, disabilityStatus: '无', religiousBelief: '无',
+        ethnicIdentity: '汉族', personalFinance: '稳定', familyFinance: '良好',
+        sessions: [
+          { 
+            id: 'session-001-1', date: '2023-10-15', summary: '首次访谈，建立咨询关系。',
+            transcript: { name: '首次访谈逐字稿.docx', content: '模拟的逐字稿内容...' },
+            conceptualization: { status: 'Complete', content: 'AI生成的个案概念化报告示例内容...' },
+            assessment: { status: 'Complete', content: 'AI生成的来访者评估报告示例内容...' },
+            supervision: { status: 'Pending', conceptualizationUploaded: false, assessmentUploaded: false, content: null }
+          },
+        ]
+      },
+      { 
+        id: 'client-002', name: '李明', age: 28, gender: '男', grade: '硕士在读', sexualOrientation: '未提供',
+        contact: '159********', joinDate: '2024-01-20', referredBy: 'client-001', referredClients: [],
+        historyOfIllness: '无', mentalStateScore: 5, disabilityStatus: '无', religiousBelief: '无',
+        ethnicIdentity: '汉族', personalFinance: '依赖家庭', familyFinance: '中等',
+        sessions: []
+      },
+    ];
+
+    // --- PROMPTS ---
     const getConceptualizationPrompt = () => `...`;
     const getAssessmentPrompt = () => `...`;
     const getSupervisionPrompt = () => `...`;
@@ -44,6 +126,7 @@
       const handleUpdateClient = (updatedClientData, callback) => {
         let newClientsState = [...clients];
         const oldClientState = newClientsState.find(c => c.id === updatedClientData.id);
+        
         if (oldClientState) {
             const oldReferredBy = oldClientState.referredBy;
             const newReferredBy = updatedClientData.referredBy;
@@ -58,6 +141,7 @@
               }
             }
         }
+        
         const clientIndex = newClientsState.findIndex(c => c.id === updatedClientData.id);
         if (clientIndex > -1) { newClientsState[clientIndex] = updatedClientData; } 
         else {
@@ -70,6 +154,7 @@
                 }
             }
         }
+        
         setClients(newClientsState);
         if (selectedClient?.id === updatedClientData.id || !oldClientState) { setSelectedClient(updatedClientData); }
         if (callback) callback(updatedClientData);
@@ -126,7 +211,7 @@
 
       return (
         <div className="min-h-screen bg-gray-100 flex flex-col">
-          <div className="bg-gray-800 text-white shadow-lg"><div className="container mx-auto px-4"><div className="flex items-center justify-between h-16"><div className="flex items-center"><span className="text-2xl mr-3">💌</span><h1 className="text-xl font-bold">心理咨询师助手</h1></div><div><button onClick={()=>setActiveSection('clientManagement')} className={`px-3 py-2 rounded-md text-sm font-medium flex items-center ${activeSection!=='cbtApplication'?'bg-gray-900':'text-gray-300 hover:bg-gray-700'}`}><span className="mr-2">👥</span>来访者管理</button><button onClick={()=>setActiveSection('cbtApplication')} className={`px-3 py-2 ml-4 rounded-md text-sm font-medium flex items-center ${activeSection==='cbtApplication'?'bg-gray-900':'text-gray-300 hover:bg-gray-700'}`}><span className="mr-2">🧠</span>CBT辅助工具</button></div></div></div></div>
+          <div className="bg-gray-800 text-white shadow-lg"><div className="container mx-auto px-4"><div className="flex items-center justify-between h-16"><div className="flex items-center"><span className="text-2xl mr-3">💌</span><h1 className="text-xl font-bold">心理咨询师助手</h1></div><div className="flex items-baseline space-x-4"><button onClick={()=>setActiveSection('clientManagement')} className={`px-3 py-2 rounded-md text-sm font-medium flex items-center ${activeSection!=='cbtApplication'?'bg-gray-900':'text-gray-300 hover:bg-gray-700'}`}><span className="mr-2">👥</span>来访者管理</button><button onClick={()=>setActiveSection('cbtApplication')} className={`px-3 py-2 ml-4 rounded-md text-sm font-medium flex items-center ${activeSection==='cbtApplication'?'bg-gray-900':'text-gray-300 hover:bg-gray-700'}`}><span className="mr-2">🛠️</span>咨询流程辅助工具 (待开发)</button></div></div></div></div>
           {globalLoadingMessage && (<div className="bg-yellow-400 text-yellow-800 text-center p-2 animate-pulse flex items-center justify-center"><span className="mr-2">⏳</span>{globalLoadingMessage}</div>)}
           <main className="flex-grow container mx-auto p-4 sm:p-6 lg:p-8">{renderSection()}</main>
         </div>
@@ -202,6 +287,7 @@
       const [activeTab, setActiveTab] = useState('profile');
       const [showEditModal, setShowEditModal] = useState(false);
       const [isAiLoading, setIsAiLoading] = useState(false);
+
       const tabs = [{ id: 'profile', label: '档案与会话', icon: '👤' }, { id: 'conceptualization', label: 'AI个案概念化', icon: '📜' },{ id: 'supervision', label: 'AI督导', icon: '🔬' },{ id: 'analysis', label: '来访者评估', icon: '📊' }];
       
       const handleAddSession = (newSessionData) => {
@@ -255,6 +341,7 @@
           
           let updatedClient = JSON.parse(JSON.stringify(client));
           updatedClient.sessions[sessionIndex].supervision[fileType + 'Uploaded'] = true;
+          
           onUpdateClient(updatedClient, async (finalUpdatedClient) => {
               const finalSession = finalUpdatedClient.sessions.find(s => s.id === sessionId);
               if(finalSession.supervision.conceptualizationUploaded && finalSession.supervision.assessmentUploaded && finalSession.supervision.status !== 'Complete' && finalSession.supervision.status !== 'Processing') {
@@ -288,7 +375,11 @@
               const result = await response.json();
               
               let finalClient = JSON.parse(JSON.stringify(processingClient));
-              finalClient.sessions[sessionIndex].supervision = { ...finalClient.sessions[sessionIndex].supervision, status: 'Complete', content: result.supervision.content };
+              finalClient.sessions[sessionIndex].supervision = { 
+                  ...finalClient.sessions[sessionIndex].supervision,
+                  status: 'Complete', 
+                  content: result.supervision.content 
+              };
               onUpdateClient(finalClient);
           } catch(error) {
               let errorClient = JSON.parse(JSON.stringify(processingClient));
