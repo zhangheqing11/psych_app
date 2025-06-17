@@ -4,16 +4,20 @@ import requests
 import os
 import json
 import traceback
+import logging
 
-# 初始化Flask应用
+# --- 初始化和配置 ---
 app = Flask(__name__, static_folder='static')
 app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024 # 16MB file size limit
+
+# 配置日志记录，使其在Render等生产环境中也能清晰显示
+logging.basicConfig(level=logging.INFO)
 
 # --- API 密钥配置 ---
 DEEPSEEK_API_KEY = "sk-44e1314da2d94b35b978f0fcd01ed26f"
 DEEPSEEK_API_URL = "https://api.deepseek.com/chat/completions"
 
-# --- PROMPTS ---
+# --- PROMPTS (内容保持不变) ---
 def get_conceptualization_prompt_text():
     return """你是一位资深的心理咨询师。根据文件中的咨询逐字稿内容以及来访的基本信息，提供个案概念化报告。报告用于辅助另一位咨询师改善自己的咨询服务质量。个案概念化整体上应遵循‘’中的步骤：
 ‘	1.选择一个最适合来访者的理论范式,使用理论假设去指导个案概念化和治疗方案的建构
@@ -142,31 +146,35 @@ def get_supervision_prompt_text():
 
 # --- 核心API调用函数 ---
 def call_deepseek_api(system_prompt, user_prompt, model='deepseek-chat', stream=False):
+    app.logger.info(f"[AI_CALL_START] model={model}, stream={stream}")
     headers = {'Content-Type': 'application/json', 'Authorization': f'Bearer {DEEPSEEK_API_KEY}'}
     payload = {'model': model, 'messages': [{"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt}], 'stream': stream}
     
     try:
         response = requests.post(DEEPSEEK_API_URL, headers=headers, json=payload, stream=stream, timeout=300) 
+        app.logger.info(f"[AI_CALL_RESPONSE_STATUS] {response.status_code}")
         response.raise_for_status()
         
         if stream:
             def generate():
-                for chunk in response.iter_content(chunk_size=None):
+                for chunk in response.iter_content(chunk_size=8192):
                     if chunk: yield chunk
             return Response(generate(), content_type=response.headers.get('Content-Type'))
         else:
             data = response.json()
+            app.logger.info("[AI_CALL_SUCCESS] Received non-stream response.")
             content = data.get('choices', [{}])[0].get('message', {}).get('content')
             if content is None:
-                raise ValueError(f"AI response did not contain expected content: {data}")
+                app.logger.error(f"[AI_CALL_ERROR] Unexpected API response structure: {data}")
+                raise ValueError("AI response did not contain expected content.")
             return content
             
     except requests.exceptions.RequestException as e:
-        print(f"--- [ERROR] Request to DeepSeek failed: {e} ---")
+        app.logger.error(f"[AI_CALL_ERROR] Request to DeepSeek failed: {e}")
         traceback.print_exc()
         raise
     except Exception as e:
-        print(f"--- [ERROR] Error processing DeepSeek response: {e} ---")
+        app.logger.error(f"[AI_CALL_ERROR] Error processing DeepSeek response: {e}")
         traceback.print_exc()
         raise
 
@@ -177,6 +185,7 @@ def serve_index():
 
 @app.route('/api/upload-and-analyze', methods=['POST'])
 def upload_and_analyze():
+    app.logger.info("[ROUTE_HIT] /api/upload-and-analyze")
     if 'transcript' not in request.files: return jsonify({"error": "请求中未找到文件"}), 400
     file = request.files['transcript']
     if file.filename == '': return jsonify({"error": "未选择文件"}), 400
@@ -186,9 +195,13 @@ def upload_and_analyze():
         client_info = json.loads(request.form.get('client_info'))
         user_prompt = f"来访者基本信息:\n{json.dumps(client_info, indent=2, ensure_ascii=False)}\n\n咨询逐字稿内容:\n---\n{transcript_content}\n---"
         
+        app.logger.info("Generating Conceptualization...")
         conceptualization_content = call_deepseek_api(get_conceptualization_prompt_text(), user_prompt, stream=False)
+        
+        app.logger.info("Generating Assessment...")
         assessment_content = call_deepseek_api(get_assessment_prompt_text(), user_prompt, stream=False)
 
+        app.logger.info("Successfully generated reports. Sending response.")
         return jsonify({
             "success": True,
             "conceptualization": {"status": "Complete", "content": conceptualization_content},
@@ -196,20 +209,26 @@ def upload_and_analyze():
             "uploadedFileName": file.filename
         })
     except Exception as e:
+        app.logger.error(f"Error in /api/upload-and-analyze: {e}")
+        traceback.print_exc()
         return jsonify({"error": f"服务器内部错误: {e}"}), 500
 
 @app.route('/api/generate-supervision', methods=['POST'])
 def generate_supervision():
+    app.logger.info("[ROUTE_HIT] /api/generate-supervision")
     try:
         data = request.json
         prompt_for_supervision = f"来访者基本信息:\n{json.dumps(data.get('client_info'), indent=2, ensure_ascii=False)}\n\n咨询逐字稿内容:\n{data.get('transcript_content')}\n\nAI生成的个案概念化:\n{data.get('conceptualization_content')}\n\nAI生成的来访者评估:\n{data.get('assessment_content')}"
         supervision_content = call_deepseek_api(get_supervision_prompt_text(), prompt_for_supervision, stream=False)
         return jsonify({"success": True, "supervision": {"status": "Complete", "content": supervision_content}})
     except Exception as e:
+        app.logger.error(f"Error in /api/generate-supervision: {e}")
+        traceback.print_exc()
         return jsonify({"error": f"服务器内部错误: {e}"}), 500
 
 @app.route('/api/call-ai', methods=['POST'])
 def call_ai_proxy():
+    app.logger.info("[ROUTE_HIT] /api/call-ai (streaming)")
     data = request.json
     system_prompt = data.get('systemPrompt')
     user_prompt = data.get('userPrompt')
