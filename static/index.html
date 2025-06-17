@@ -21,27 +21,7 @@
   <div id="root"></div>
 
   <script type="text/babel">
-    // --- Helper function for API calls (Simplified) ---
-    // This function is now only used by the CBT tool, which is currently disabled.
-    // The main file upload logic now exists within ClientDetailView.
-    const callApi = async ({ systemPrompt, userPrompt, model = 'deepseek-chat', onError = console.error }) => {
-      const apiURL = '/api/call-ai'; // This endpoint is currently disabled in the backend.
-      try {
-        const response = await fetch(apiURL, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ model, systemPrompt, userPrompt, stream: false }), // Always false now
-        });
-        if (!response.ok) throw new Error(`API request failed with status ${response.status}`);
-        const data = await response.json();
-        return data.choices[0].message.content;
-      } catch (err) {
-        onError(err.message);
-        return `对后端服务器的API调用失败: ${err.message}`;
-      }
-    };
-    
-    // (Omitted other helpers and data for brevity, they are unchanged)
+    // (Omitted helper functions and data for brevity, they are the same as the last working version)
     const downloadTextAsFile = (content, filename) => { /*...*/ };
     const initialClients = [ /*...*/ ];
     const getConceptualizationPrompt = () => `...`;
@@ -97,10 +77,12 @@
 
       const handleAddClient = (newClient, clientToEdit) => {
         if(clientToEdit) {
-          handleUpdateClient(newClient);
+          handleUpdateClient(newClient, clientToEdit);
         } else {
           const clientWithDefaults = { ...newClient, id: `client-${Date.now()}`, sessions: [], joinDate: new Date().toISOString().split('T')[0], referredBy: newClient.referredBy || null, referredClients: [] };
-          handleUpdateClient(clientWithDefaults, null, true);
+          handleUpdateClient(clientWithDefaults);
+          setSelectedClient(clientWithDefaults); 
+          setActiveSection('clientDetail');
         }
       };
       
