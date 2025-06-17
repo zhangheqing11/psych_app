@@ -13,7 +13,7 @@ app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024 # 16MB file size limit
 DEEPSEEK_API_KEY = "sk-44e1314da2d94b35b978f0fcd01ed26f"
 DEEPSEEK_API_URL = "https://api.deepseek.com/chat/completions"
 
-# --- PROMPTS (内容保持不变) ---
+# --- PROMPTS ---
 def get_conceptualization_prompt_text():
     return """你是一位资深的心理咨询师。根据文件中的咨询逐字稿内容以及来访的基本信息，提供个案概念化报告。报告用于辅助另一位咨询师改善自己的咨询服务质量。个案概念化整体上应遵循‘’中的步骤：
 ‘	1.选择一个最适合来访者的理论范式,使用理论假设去指导个案概念化和治疗方案的建构
@@ -146,7 +146,7 @@ def call_deepseek_api(system_prompt, user_prompt, model='deepseek-chat', stream=
     payload = {'model': model, 'messages': [{"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt}], 'stream': stream}
     
     try:
-        response = requests.post(DEEPSEEK_API_URL, headers=headers, json=payload, stream=stream, timeout=300) # Increased timeout
+        response = requests.post(DEEPSEEK_API_URL, headers=headers, json=payload, stream=stream, timeout=300) 
         response.raise_for_status()
         
         if stream:
