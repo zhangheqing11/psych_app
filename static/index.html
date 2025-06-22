@@ -15,6 +15,7 @@
     body { font-family: 'Inter', sans-serif; }
     @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
     .animate-fadeIn { animation: fadeIn 0.5s ease-out forwards; }
+    /* Simple modal style for alerts */
     .alert-modal {
       position: fixed;
       top: 0;
@@ -54,118 +55,169 @@
   <div id="root"></div>
 
   <script type="text/babel">
-    const API_BASE_URL = 'http://127.0.0.1:5000';
+    // --- AI PROMPT DEFINITIONS (Ported from app.py) ---
+    // These functions contain the detailed instructions for the AI model.
+    const getConceptualizationPromptText = () => `你是一位资深的心理咨询师。根据文件中的咨询逐字稿内容以及来访的基本信息，提供个案概念化报告。报告用于辅助另一位咨询师改善自己的咨询服务质量。个案概念化整体上应遵循‘’中的步骤：\n‘\t1.选择一个最适合来访者的理论范式,使用理论假设去指导个案概念化和治疗方案的建构\n\t2.利用一些假设、支持性的材料或结论，作为个案概念化的关键信息\n\t3.概述治疗计划，将长期、短期治疗目标作为发展治疗计划的关键要点。治疗目标的表述让来访可以理解，尽量符合其期望与价值观。\n4.提示咨询师何种表达方式对来访可能是有吸引力的。提示接下来的咨询方向（咨询师该怎样做），包括但不限于哪些话题可能需要被深入讨论和谈论哪些话题可能存在潜在风险。’\n\n关于个案概念化的结构要素和内容，参考{}内的要求：\n{\t1.概要：根据理论视角对来访核心优势和局限的简要分析假设。即对来访的核心印象、总览，以帮助通过阅读个案概念化对个案有大致了解。内容包括：人口学与社会文化等基本信息、问题情况与咨询目标简介。\n\t2.支持性素材：为概要提供细节依据，包括但不限于：1.对来访优势的深度分析（优势的地方、积极的因素、成功、应对策略、技能、促进改变的因子)；2.对弱点的深度分析（担心、困难、问题、症状、缺陷技术、治疗障碍）；3.来访的成长史、部分生活史，呈现过去成长和现在生活中的各种细节；困难和资源、咨询和生活中的模式等。4.咨询目标，实现目标的可能路径与阻碍\n\t3. 初始评估会谈及报告：聚焦来访当下的功能（功能维度：动力学）\n\t评估来访问题的严重程度，同时，也要从以下几个领域评估咨询师与来访的潜在差异：1.先后天残障；2.宗教信仰：3.种族和民族认同；4.个人经济地位；5.性取向与性别\n这种差异评估是为了鉴别权力差异（咨询专家与求助者）和防止发生压迫/侵犯。\n}\n\n关于治疗方案的建立，遵循[]中的要求：\n[一、治疗方案的结构要素\n\t1.治疗方案综述：简要介绍治疗计划是如何进行的。使用来访理解的语言增强对治疗的掌控感、责任心。和来访共同确认。\n\t2.长期治疗目标：实则由多个短期目标构成。\n\t3.短期治疗目标：具体、可测量。这种积极变化应对于来访是可完成的、有动机的，以内化进来访的内心。\n \n二、治疗方案的视角\n\t每个治疗目标和支持材料应聚焦于来访各种主要社会角色（员工、父亲、朋友……）的功能水平或行为症状。\n1.基于假设模式\n\t以动力学的理论假设为核心，建构概要、支持材料、治疗目标等。\n2.基于症状模式\n\t根据来访报告的客观症状或行为，分析行为的原因和可能结果。通过在咨询中重演不同情境下的相关行为，探索一个行为的trigger是什么，练习正念觉察。学习稳定和调适情绪的技术。\n3.基于人际关系模式\n\t根据来访与重要他人和咨询中的关系模式，探索并分析关系如何建立、加强、破裂，行为是哪些。可以向现实生活中的不同模板询问、学习。\n4.基于历史模式\n\t从过去习得了什么，这些习得的模式如何带来心理问题。来访的需要和当前状况，最迫切关注的焦点，是如何与过去的习得产生联系的。\n \n三、治疗方案的格式规范\n1.基本模式\n\t主要聚焦于来访者需要达到的、学习的或者需要发展的内容。\n2.问题模式\n\t根据需要减少的适应不良的行为或问题来确定治疗目标。\n3.短期目标模式\n\t清晰地呈现来访者当前的问题、问题的当下状态、治疗这个问题立即的应对计划，为什么选择这个治疗方案的说明。包括：来访主观素材、咨询师客观素材、基于两种素材咨询师开展的评估、与来访共同商定的治疗计划。]\n你的整体目标应该是帮助咨询师提升服务质量，指明后续咨询方向。`;
+    const getAssessmentPromptText = () => `你是一位资深的心理咨询师。基于文件中咨询逐字稿的内容，并遵循以下我给出的评估维度，对该来访做出专业化的评估。\n\t一、个人信息维度\n\t1.目前心理状态\n\t2.成长史（初中及以前）与当下部分生活史，呈现过去成长和现在生活中的各种细节、困难和资源。咨询和生活中的行为模式\n\t3.早期及现在人际关系和依恋特点（初中及以前），咨询和生活中的关系模式\n\t4.优势的深度分析（优势之处、积极因素、获得的成功、健康应对策略、技能、促进改变的因子\n\t5.弱点的深度分析（困难、问题、症状、缺陷或僵化应对、治疗阻碍）\n\t二、功能维度\n\t1.自我功能\n\t1.1自我觉知：如何看待自己。包括：\n\t自我身份认同：对自己的定义（认为自己是谁）、价值观、能力与局限性。在青少年时期逐渐稳定\n\t自我评价：反映个人能力在主观和客观的相符程度，也包括对自我理想意象的幻想（即理想の自我是什么样的）。思想和行动符合，我们的内在理想就会感到自我实现和自豪；否则就会产生内疚、失败和一无是处的感觉。\n\t1.2自尊管理：从打击中恢复原状的能力。\n\t包括自尊的脆弱性（水平高低、稳定性）、应对挫败自尊的方式（自恋自大或自我挫败/受虐，而更健康的方式是直面问题 而不是困在自我中）、利用他人调节自尊。自尊是对自己的尊敬和或欣赏，自尊问题使我们变得无法承受情感和焦虑，无法现实评价能力和局限，无法控制我们的冲动，无法放松，等等。\n\t此外，自我评价的问题也会导致自我知觉的扭曲和自尊管理的困难。有的人会高估自己的能力(夸大)，而有的人会低估自己的能力（抑郁），又或者理想化他人。（嫉妒具有攻击性，而羡慕具有靠近的倾向）\n\t2.人际关系功能：保持稳定、信任、亲密关系的能力\n\t关键：1.关系中对自己和对方的信任感、2.感知度：既好又坏的立体性、独特个性的独立性（明白他人的思想和感受与自己不同，心智化能力）、过去到现在与未来可能变化的完整性。3.安全感：抵抗面对分离、分歧、消极情绪。4.亲密性（边界情况）；5.相互依存度：合适的依存是既给予也享受的。\n\t \n\t除此以外仍然关键的要素有：共情能力、来访意识与无意识对他人的期待和对关系的幻想。 \n\t两种关系问题：无意识投射与幻想、缺乏社交功能。前者揭露，后者支持\n\t在成长的过程中，小时候和重要他人的互动为他们整个人生中与人互动的方式打下了不可磨灭的烙印。被爱护和照料得很好的人学会了期待从他人那里也得到这些，而被虐待或忽视的人学会了预期被虐待。即使人们意识不到这些内化的无意识的关系模式和幻想，也依然影响着他们的每一次行动。\n\t这些幻想之所以残留在意识之外，是因为它们引发了羞愧、焦虑或其他令人不舒服的强烈情感。如果他们意识不到这些无意识的需求，人们就无法选择能和他们建立成熟满意的人际关系的他人。甚至意识层面的需求和无意识的需求有所冲突。\n\t社交功能包括：共情能力、对自我羞耻的程度、识别社会性线索的能力。这些都影响着融入人际关系的能力。\n\t以资访关系为模板，检查过往模式的重现并提供修正机会。如咨询师反馈自己的想法和感受，修正来访的错误知觉；强化适应性的防御并取代非适应性的（适应性的判断标准）；通过来访猜测咨询师-咨询师反馈，提升心智化功能等。最终使来访认清过往模式，并开始憧憬他们可以拥有对身边的人更为现实的、大不相同的期待\n\t3.适应功能：面对压力的调整\n\t内在压力包括思想和幻想、情感和焦虑、痛苦和其他身体感觉;外在压力包括与他人的人际关系、与经济状况和工作相关的压力、创伤以及其他环境因素。人们在忍受内部或外部的压力刺激时有着各自的阈限，也有着适应内部和外部压力刺激的不同方式，包括：防御机制、冲动控制、情绪管理、感觉调节\n\t感觉刺激管理能力：对各种感官刺激的耐受和注意力分配能力\n\t情绪管理能力：耐受、管理、稳定体验、表达情绪的能力。情绪快速激烈变化说明该能力差。\n\t冲动控制差可能有物质成瘾、控制性强、暴力、违法行为等问题\n\t \n\t无意识的调节压力即是防御机制，我们应对压力的个性化方式在早年时往往具有适应性意义，让我们免受负面感受的威胁。评价防御机制的三个维度：\n\t1.适应性：帮助适应压力的同时，保护或增强机能。适应性不是绝对的，一种情形下的强适应性机制可能是另一种情形下的弱适应性机制。2.灵活性。3.对思维与情感的自知力\n\t不适应的信号：1防御动用了过多的心理能量，以至于只给我们留下很少的精力去发动其他的重要功能。2防御损害了体验情感，或拥有成熟满意的人际关系的能力。3泛化、僵化的防御方式。4以自我毁灭或身体痛苦为代价\n\t不适应信号的识别：1心理或行为表现；2主观或客观的痛苦；3人际关系问题；4反移情（这也提示着生活中他人对来访的感受）\n\t干预第一步：帮助来访者认清他们的适应方式有问题，当前防御的效果是有限的。将僵化的防御与新习得的适应性防御，两种方式的结果进行比较、确认，能更好的留在来访心中。\n \n\t4.认知功能\n4.1组织与规划思维、决策制订和问题解决能力、创造性思维\n\tA有条理，以细节为导向，会提前规划，并且可以冷静地解决问题。B更加随意，频繁地改变主意，以一种更情绪化的方式解决问题。最终，两个方案都可以大获成功，但是就计划筹备它们的思路和过程而言，是相当不同的。我们的任务不是去评判哪个方式更好，而是描述我们的来访解决问题的风格，同时去思考这些风格是如何积极或消极地影响他们的生活的。\n\t4.2判断能力：意识到一个有意行为的适当性和可能发生的结果，且行为能够体现这种意识（知道踩油门会出车祸但还是踩了，冲动不叫有判断力）\n“明辨是非”的道德判断力是超我的功能，也可以通过内疚感来评估,如果满足愿望的冲动无法控制或道德判断不正常，都属于认知功能异常。判断力不是“全或无”的性质，而是可以在不同环境下增大或衰减的。\n\t4.3反思能力：评估/检验自身想法和行为的能力，修正不一致的态度和感受的能力。\n\t①心理感受性是和自省力有所关联的，它指的是思考某人产生思维、感觉和行为时的可能有的无意识动机的能力。自省的能力帮助人们认识和改善他们对自己和与他人关系的感知。\n\t②现实检验能力：分辨现实/事实与幻想/主管臆测的能力\n\t 来访的认知功能差，是无意识使其阻滞，还是从未习得？如果一个人有能力执行功能但是被阻滞了，就被认为是由冲突导致的问题；而如果一个人缺乏执行功能的能力，甚至从早年间就有过种种迹象，就被认为是由缺陷导致的\n\t另外，问题是长期/近期的、是总体性的还是选择性的，都有助于区分冲突/缺陷。 \n \n5.工作和娱乐功能\n\t工作是付出身体或是精神努力去做某事，有目的性的活动。一个人“选择”做了什么（当然也包括职业）可以反映出他的个人和人际生活，也匹配于他的心智、能力、局限性。\n\t娱乐指放松、沉浸于幻想、无焦虑的体验无意识情感和驱力的能力。会娱乐的人可能拥有更健康的情绪生活并且成长得更顺利，缺乏休闲活动暗示他们在放松和享受方面有巨大问题。\n\t评估工作和娱乐领域：1.很好地与他们的发展水平或年龄、天赋、局限性匹配；2.感到舒服或愉悦；3.物质基础足以照顾自己和家人。`;
+    const getSupervisionPromptText = () => `你是资深心理咨询督导师，采用精神动力学取向整合视角。\n你的核心关注点包括：来访者福祉与伦理合规性、咨询过程微观分析、咨询师自我觉察与专业发展、以及关系动力系统解构。\n请根据提供的来访者信息和所有文件内容，从以下维度进行分析，并生成一份结构化的临床督导报告。\n\n# 分析维度：\n1.  **来访者分析:**\n    * **显性内容:** 分析表层陈述的事实、诉求，以及可观察的情绪反应强度与变化。\n    * **隐性心理过程:** 探索自体表征（自我价值感/完整性）、客体关系模式（互动期待/内在工作模型）、防御机制层级（从原始到成熟）、移情线索（对咨询师的角色投射），以及未满足的核心需求。\n    * **发展性评估:** 评估咨询前后表征模式的变化、心理化能力水平和反思功能的进展。\n2.  **咨询师分析:**\n    * **干预技术分析:** 命名具体技术（如『支持性面质』『隐喻性诠释』），评估技术实施时序（是否匹配进程节律），以及技术选择与个案概念化的逻辑联结。\n    * **回应效能评估:** 评估与来访者潜意识的匹配度（1-5级评分），对咨询联盟的影响（强化/削弱/中性），以及是否拓展心理空间（是/否/部分）。\n    * **反移情管理:** 识别咨询师的身体、情绪、认知等反移情线索及处理方式。\n3.  **关系动力分析:**\n    * **移情-反移情矩阵:** 分析投射性认同激活领域、互补性/一致性反移情模式，以及修复性体验发生节点。\n    * **此时此地互动:** 分析3轮对话内的情感传递精度及非言语同步性（语音停顿/语速匹配）。\n    * **平行过程监测:** 寻找咨询关系模式在督导中的重现证据及机构系统压力的传导路径。\n4.  **专业发展指导:**\n    * **能力成长点:** 指出需强化的理论模块和技术优化建议。\n    * **盲点警示:** 提示文化偏见风险和伦理敏感域。\n\n# 输出规格：\n* **格式:** 结构化临床督导报告。\n* **必须包含的章节:** 关键交互片段标记（时间戳+对话摘要）、动力过程概念化图谱、伦理风险评级（低/中/高）、具体可操作改进策略（按实施优先级排序），以及督导后反思问题（3个开放式提问）。\n* **禁止:** 绝对化诊断表述（如『来访者患有XX障碍』），脱离文本的推测性解读。\n\n# 特殊要求：\n* 标注每项结论的文本证据来源（如『L34来访者握拳陈述』）。\n* 区分观察事实与督导假设（使用『可能表明』『提示』等限定词）。\n* 整合至少2个理论视角（主体间性/依恋理论/关系精神分析等）。`;
+
+    // --- Gemini API Call Function ---
+    const callGeminiApi = async (systemPrompt, userPrompt) => {
+        const apiKey = ""; // API key is handled by the environment
+        const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`;
+        const chatHistory = [ { role: "user", parts: [{ text: systemPrompt + "\n\n" + userPrompt }] } ];
+        const payload = { contents: chatHistory };
+        try {
+            const response = await fetch(apiUrl, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+            if (!response.ok) {
+                const errorBody = await response.json();
+                console.error("API Error Response:", errorBody);
+                throw new Error(`API request failed with status ${response.status}`);
+            }
+            const result = await response.json();
+            if (result.candidates && result.candidates[0].content.parts[0].text) {
+                return result.candidates[0].content.parts[0].text;
+            } else {
+                console.error("Unexpected API response structure:", result);
+                throw new Error("Invalid response structure from AI API.");
+            }
+        } catch (error) {
+            console.error("Error calling Gemini API:", error);
+            throw error;
+        }
+    };
+
+    // --- Helper function to download text files ---
+    const downloadTextAsFile = (content, filename) => {
+        const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+    };
+
+    // --- Mock Initial Data ---
+    const initialClients = [
+      { 
+        id: 'client-001', name: '王芳', age: 32, gender: '女', grade: '在职', sexualOrientation: '异性恋',
+        contact: '138********', joinDate: '2023-10-15', referredBy: null, referredClients: ['client-002'],
+        historyOfIllness: '无重大既往史', mentalStateScore: 7, disabilityStatus: '无', religiousBelief: '无',
+        ethnicIdentity: '汉族', personalFinance: '稳定', familyFinance: '良好',
+        sessions: [
+          { 
+            id: 'session-001-1', date: '2023-10-15', summary: '首次访谈，建立咨询关系。',
+            transcript: { name: '首次访谈逐字稿.txt', content: '模拟的逐字稿内容...' },
+            conceptualization: { status: 'Complete', content: '这是AI为王芳生成的个案概念化报告示例。报告详细分析了来访者的核心问题，并根据精神动力学理论提出了初步的治疗假设和方向。' },
+            assessment: { status: 'Complete', content: '这是AI为王芳生成的来访者评估报告示例。报告从自我功能、人际关系、适应能力等多个维度对来访者进行了全面的评估。' },
+            supervision: { status: 'Pending', conceptualizationUploaded: false, assessmentUploaded: false, content: null }
+          },
+        ]
+      },
+      { 
+        id: 'client-002', name: '李明', age: 28, gender: '男', grade: '硕士在读', sexualOrientation: '未提供',
+        contact: '159********', joinDate: '2024-01-20', referredBy: 'client-001', referredClients: [],
+        historyOfIllness: '无', mentalStateScore: 5, disabilityStatus: '无', religiousBelief: '无',
+        ethnicIdentity: '汉族', personalFinance: '依赖家庭', familyFinance: '中等',
+        sessions: []
+      },
+    ];
+    
+    const initialCounselors = [
+        { id: 'counselor-01', name: '李慧', modality: '人本主义、精神分析', email: 'li.hui@example.com', assignedClientIds: ['client-001', 'client-002'] },
+        { id: 'counselor-02', name: '张伟', modality: 'CBT、焦点解决', email: 'zhang.wei@example.com', assignedClientIds: [] },
+    ];
+    
+    const getInitialAppointments = () => {
+        const today = new Date();
+        const getFutureDate = (days) => {
+            const future = new Date();
+            future.setDate(today.getDate() + days);
+            return future.toISOString().split('T')[0];
+        };
+        return [
+            { id: 'appt-01', date: getFutureDate(0), time: '10:00', clientId: 'client-001', counselorId: 'counselor-01', location: '线上会议室 A', notes: '第三次会谈' },
+            { id: 'appt-02', date: getFutureDate(1), time: '14:00', clientId: 'client-002', counselorId: 'counselor-01', location: '咨询室 201', notes: '初步评估' },
+            { id: 'appt-03', date: getFutureDate(1), time: '11:00', clientId: 'client-001', counselorId: 'counselor-01', location: '线上会议室 B', notes: '跟进' },
+        ];
+    };
+
 
     // --- Main Application Component ---
     const App = () => {
-      const { useState, useEffect, useCallback } = React;
+      const { useState, useEffect } = React;
       
-      const [clients, setClients] = useState([]);
-      const [counselors, setCounselors] = useState([]);
-      const [appointments, setAppointments] = useState([]);
-      const [currentUser, setCurrentUser] = useState(null);
-      const [isLoading, setIsLoading] = useState(true);
+      const [clients, setClients] = useState(() => {
+        try { const saved = localStorage.getItem('psychClients'); return saved ? JSON.parse(saved) : initialClients; } 
+        catch (e) { console.error("Failed to parse clients from localStorage", e); return initialClients; }
+      });
+      const [counselors, setCounselors] = useState(() => {
+        try { const saved = localStorage.getItem('psychCounselors'); return saved ? JSON.parse(saved) : initialCounselors; }
+        catch (e) { console.error("Failed to parse counselors from localStorage", e); return initialCounselors; }
+      });
+      const [appointments, setAppointments] = useState(() => {
+        try { const saved = localStorage.getItem('psychAppointments'); return saved ? JSON.parse(saved) : getInitialAppointments(); }
+        catch (e) { console.error("Failed to parse appointments from localStorage", e); return getInitialAppointments(); }
+      });
+      const [users, setUsers] = useState(() => {
+          try { const saved = localStorage.getItem('psychUsers'); return saved ? JSON.parse(saved) : {}; }
+          catch(e) { return {}; }
+      });
+      const [currentUser, setCurrentUser] = useState(() => {
+          try { const saved = sessionStorage.getItem('psychCurrentUser'); return saved ? JSON.parse(saved) : null; }
+          catch(e) { return null; }
+      });
 
       const [activeSection, setActiveSection] = useState('schedule');
       const [selectedClient, setSelectedClient] = useState(null);
       const [globalLoadingMessage, setGlobalLoadingMessage] = useState('');
       const [alertInfo, setAlertInfo] = useState({ show: false, message: '' });
-      
-      const showAlert = useCallback((message) => {
-        setAlertInfo({ show: true, message });
-      }, []);
 
-      // Function to fetch all data from backend
-      const fetchData = useCallback(async () => {
-          setIsLoading(true);
-          try {
-              const response = await fetch(`${API_BASE_URL}/api/data`);
-              if (!response.ok) throw new Error('Network response was not ok');
-              const data = await response.json();
-              setClients(data.clients);
-              setCounselors(data.counselors);
-              setAppointments(data.appointments);
-          } catch (error) {
-              console.error("Failed to fetch data:", error);
-              showAlert("无法连接到后端服务器，请确保服务器正在运行。");
-          } finally {
-              setIsLoading(false);
-          }
-      }, [showAlert]);
-
-      // Function to save all data to backend
-      const saveData = useCallback(async (data) => {
-          try {
-              const response = await fetch(`${API_BASE_URL}/api/data`, {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify(data),
-              });
-              if (!response.ok) throw new Error('Failed to save data');
-              // Optionally show a success message
-          } catch (error) {
-              console.error("Failed to save data:", error);
-              showAlert("保存数据失败，请检查服务器连接。");
-          }
-      }, [showAlert]);
-
-      // Effect to fetch initial data on mount
-      useEffect(() => {
-          if (currentUser) {
-              fetchData();
-          }
-      }, [currentUser, fetchData]);
-
-      // Effect to save data whenever it changes
-      useEffect(() => {
-        // We avoid saving on the very first render cycle when data is still being loaded
-        if (!isLoading && currentUser) {
-          saveData({ clients, counselors, appointments });
-        }
-      }, [clients, counselors, appointments, isLoading, currentUser, saveData]);
-      
-      const handleRegister = async (username, password) => {
+      useEffect(() => { 
         try {
-            const response = await fetch(`${API_BASE_URL}/api/register`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ username, password }),
-            });
-            const data = await response.json();
-            if (response.ok) {
-                setCurrentUser({ username });
-                showAlert(data.message);
-                return true;
+            localStorage.setItem('psychClients', JSON.stringify(clients));
+            localStorage.setItem('psychCounselors', JSON.stringify(counselors));
+            localStorage.setItem('psychAppointments', JSON.stringify(appointments));
+            localStorage.setItem('psychUsers', JSON.stringify(users));
+            if(currentUser) {
+                sessionStorage.setItem('psychCurrentUser', JSON.stringify(currentUser));
             } else {
-                showAlert(data.message);
-                return false;
+                sessionStorage.removeItem('psychCurrentUser');
             }
-        } catch (error) {
-            showAlert('注册请求失败，请检查服务器。');
-            return false;
         }
+        catch (e) { console.error("Failed to save data to storage", e); }
+      }, [clients, counselors, appointments, users, currentUser]);
+
+      const showAlert = (message) => {
+        setAlertInfo({ show: true, message });
       };
 
-      const handleLogin = async (username, password) => {
-        try {
-            const response = await fetch(`${API_BASE_URL}/api/login`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ username, password }),
-            });
-            const data = await response.json();
-            if (response.ok) {
-                setCurrentUser({ username });
-                showAlert(data.message);
-                return true;
-            } else {
-                showAlert(data.message);
-                return 'user_not_found'; // Special signal for UI to switch to register
-            }
-        } catch(error) {
-            showAlert('登录请求失败，请检查服务器。');
-            return false;
-        }
+      const handleRegister = (username, password) => {
+          if (users[username]) {
+              showAlert('用户名已存在！');
+              return false;
+          }
+          const newUsers = { ...users, [username]: { password } };
+          setUsers(newUsers);
+          setCurrentUser({ username });
+          showAlert('注册成功！');
+          return true;
+      };
+
+      const handleLogin = (username, password) => {
+          if (users[username] && users[username].password === password) {
+              setCurrentUser({ username });
+              showAlert(`欢迎回来, ${username}!`);
+              return true;
+          }
+          return false;
       };
       
       const handleLogout = () => {
@@ -173,44 +225,41 @@
       }
 
       const handleUpdateClient = (updatedClientData, callback) => {
-        setClients(prevClients => {
-            let newClientsState = [...prevClients];
-            const oldClientState = newClientsState.find(c => c.id === updatedClientData.id);
-            if (oldClientState) {
-                const oldReferredBy = oldClientState.referredBy;
-                const newReferredBy = updatedClientData.referredBy;
-                if (oldReferredBy !== newReferredBy) {
-                  if (oldReferredBy) {
-                    const oldReferrerIndex = newClientsState.findIndex(c => c.id === oldReferredBy);
-                    if (oldReferrerIndex > -1) { newClientsState[oldReferrerIndex].referredClients = newClientsState[oldReferrerIndex].referredClients.filter(id => id !== updatedClientData.id); }
-                  }
-                  if (newReferredBy) {
-                    const newReferrerIndex = newClientsState.findIndex(c => c.id === newReferredBy);
-                    if (newReferrerIndex > -1 && !newClientsState[newReferrerIndex].referredClients.includes(updatedClientData.id)) { newClientsState[newReferrerIndex].referredClients.push(updatedClientData.id); }
-                  }
+        let newClientsState = [...clients];
+        const oldClientState = newClientsState.find(c => c.id === updatedClientData.id);
+        
+        if (oldClientState) {
+            const oldReferredBy = oldClientState.referredBy;
+            const newReferredBy = updatedClientData.referredBy;
+            if (oldReferredBy !== newReferredBy) {
+              if (oldReferredBy) {
+                const oldReferrerIndex = newClientsState.findIndex(c => c.id === oldReferredBy);
+                if (oldReferrerIndex > -1) { newClientsState[oldReferrerIndex].referredClients = newClientsState[oldReferrerIndex].referredClients.filter(id => id !== updatedClientData.id); }
+              }
+              if (newReferredBy) {
+                const newReferrerIndex = newClientsState.findIndex(c => c.id === newReferredBy);
+                if (newReferrerIndex > -1) { if (!newClientsState[newReferrerIndex].referredClients.includes(updatedClientData.id)) { newClientsState[newReferrerIndex].referredClients.push(updatedClientData.id); } }
+              }
+            }
+        }
+        
+        const clientIndex = newClientsState.findIndex(c => c.id === updatedClientData.id);
+        if (clientIndex > -1) { newClientsState[clientIndex] = updatedClientData; } 
+        else {
+            newClientsState.push(updatedClientData);
+            const newReferredBy = updatedClientData.referredBy;
+            if (newReferredBy) {
+                const newReferrerIndex = newClientsState.findIndex(c => c.id === newReferredBy);
+                if (newReferrerIndex > -1 && !newClientsState[newReferrerIndex].referredClients.includes(updatedClientData.id)) {
+                    newClientsState[newReferrerIndex].referredClients.push(updatedClientData.id);
                 }
             }
-            const clientIndex = newClientsState.findIndex(c => c.id === updatedClientData.id);
-            if (clientIndex > -1) {
-                newClientsState[clientIndex] = updatedClientData;
-            } else {
-                newClientsState.push(updatedClientData);
-                const newReferredBy = updatedClientData.referredBy;
-                if (newReferredBy) {
-                    const newReferrerIndex = newClientsState.findIndex(c => c.id === newReferredBy);
-                    if (newReferrerIndex > -1 && !newClientsState[newReferrerIndex].referredClients.includes(updatedClientData.id)) {
-                        newClientsState[newReferrerIndex].referredClients.push(updatedClientData.id);
-                    }
-                }
-            }
-            if (selectedClient?.id === updatedClientData.id || !oldClientState) {
-                setSelectedClient(updatedClientData);
-            }
-            if (callback) callback(updatedClientData);
-            return newClientsState;
-        });
+        }
+        
+        setClients(newClientsState);
+        if (selectedClient?.id === updatedClientData.id || !oldClientState) { setSelectedClient(updatedClientData); }
+        if (callback) callback(updatedClientData);
       };
-
 
       const handleAddClient = (newClientData, clientToEdit) => {
           if (clientToEdit) {
@@ -231,19 +280,23 @@
       const handleDeleteClient = (clientId) => {
         const clientToDelete = clients.find(c => c.id === clientId);
         if (!clientToDelete) return;
-
-        setClients(prev => prev.filter(client => client.id !== clientId));
-        setCounselors(prev => prev.map(counselor => ({
+        let updatedClients = clients.filter(client => client.id !== clientId);
+        updatedClients = updatedClients.map(client => {
+          if (client.referredBy === clientId) { return { ...client, referredBy: null }; }
+          if (client.referredClients.includes(clientId)) { return { ...client, referredClients: client.referredClients.filter(id => id !== clientId) }; }
+          return client;
+        });
+        
+        let updatedCounselors = counselors.map(counselor => ({
             ...counselor,
             assignedClientIds: counselor.assignedClientIds.filter(id => id !== clientId)
-        })));
-        setAppointments(prev => prev.filter(appt => appt.clientId !== clientId));
+        }));
 
         showAlert(`来访者 ${clientToDelete?.name} 已被删除。`);
-        if (selectedClient?.id === clientId) {
-            setSelectedClient(null);
-            setActiveSection('clientManagement');
-        }
+        setClients(updatedClients);
+        setCounselors(updatedCounselors);
+        setAppointments(prev => prev.filter(appt => appt.clientId !== clientId));
+        if (selectedClient?.id === clientId) { setSelectedClient(null); setActiveSection('clientManagement'); }
       };
       
       const handleUpdateCounselors = (updatedCounselors) => {
@@ -263,16 +316,14 @@
             if (isDelete) {
                 setAppointments(prev => prev.filter(appt => appt.id !== appointmentData.id));
             } else {
-                setAppointments(prev => {
-                    const existingIndex = prev.findIndex(appt => appt.id === appointmentData.id);
-                    if (existingIndex > -1) {
-                        const updated = [...prev];
-                        updated[existingIndex] = appointmentData;
-                        return updated;
-                    } else {
-                       return [...prev, {...appointmentData, id: `appt-${Date.now()}`}];
-                    }
-                });
+                const existingIndex = appointments.findIndex(appt => appt.id === appointmentData.id);
+                if (existingIndex > -1) {
+                    const updated = [...appointments];
+                    updated[existingIndex] = appointmentData;
+                    setAppointments(updated);
+                } else {
+                    setAppointments(prev => [...prev, {...appointmentData, id: `appt-${Date.now()}`}]);
+                }
             }
       };
 
@@ -286,9 +337,6 @@
       ];
 
       const renderSection = () => {
-        if (isLoading) {
-            return <div className="text-center p-10">正在加载数据...</div>;
-        }
         switch (activeSection) {
           case 'clientManagement':
             return <ClientManagementSection clients={clients} onAddClient={handleAddClient} onSelectClient={handleSelectClient} />;
@@ -317,7 +365,7 @@
       };
 
       if (!currentUser) {
-          return <AuthModal onLogin={handleLogin} onRegister={handleRegister} showAlert={showAlert} />;
+          return <AuthModal onLogin={handleLogin} onRegister={handleRegister} users={users} showAlert={showAlert} />;
       }
 
       return (
@@ -360,29 +408,31 @@
     
     // --- Components ---
     
-    const AuthModal = ({ onLogin, onRegister, showAlert }) => {
+    const AuthModal = ({ onLogin, onRegister, users, showAlert }) => {
         const { useState } = React;
         const [mode, setMode] = useState('login'); // login or register
         const [username, setUsername] = useState('');
         const [password, setPassword] = useState('');
         const [confirmPassword, setConfirmPassword] = useState('');
 
-        const handleLoginAttempt = async (e) => {
+        const handleLoginAttempt = (e) => {
             e.preventDefault();
             if (!username || !password) {
                 showAlert('请输入用户名和密码。');
                 return;
             }
-            const result = await onLogin(username, password);
-            if (result === 'user_not_found') {
-                 showAlert('用户不存在，请先注册。');
-                 setMode('register');
-            } else if (result === false) {
-                 showAlert('密码错误！');
+            const loginSuccess = onLogin(username, password);
+            if (!loginSuccess) {
+                if (!users[username]) {
+                    showAlert('用户不存在，请先注册。');
+                    setMode('register');
+                } else {
+                    showAlert('密码错误！');
+                }
             }
         };
         
-        const handleRegisterAttempt = async (e) => {
+        const handleRegisterAttempt = (e) => {
             e.preventDefault();
             if (!username || !password || !confirmPassword) {
                 showAlert('请填写所有字段。');
@@ -392,7 +442,7 @@
                 showAlert('两次输入的密码不匹配！');
                 return;
             }
-            await onRegister(username, password);
+            onRegister(username, password);
         };
 
         return (
@@ -446,13 +496,13 @@
         }, [counselors, appointments]);
 
         const handleSaveCounselor = (counselorData) => {
-            let updatedList;
+            let updatedCounselors;
             if (counselorToEdit) {
-                updatedList = counselors.map(c => c.id === counselorData.id ? counselorData : c);
+                updatedCounselors = counselors.map(c => c.id === counselorData.id ? counselorData : c);
             } else {
-                updatedList = [...counselors, { ...counselorData, id: `counselor-${Date.now()}`, assignedClientIds: counselorData.assignedClientIds || [] }];
+                updatedCounselors = [...counselors, { ...counselorData, id: `counselor-${Date.now()}`, assignedClientIds: counselorData.assignedClientIds || [] }];
             }
-            onUpdateCounselors(updatedList);
+            onUpdateCounselors(updatedCounselors);
             setShowAddModal(false);
             setCounselorToEdit(null);
         };
