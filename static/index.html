@@ -15,201 +15,829 @@
     body { font-family: 'Inter', sans-serif; }
     @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
     .animate-fadeIn { animation: fadeIn 0.5s ease-out forwards; }
+    .alert-modal {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background-color: rgba(0, 0, 0, 0.5);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 1000;
+    }
+    .alert-modal-content {
+      background: white;
+      padding: 2rem;
+      border-radius: 0.5rem;
+      box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+      text-align: center;
+      max-width: 90%;
+      width: 400px;
+    }
+    .alert-modal-button {
+      margin-top: 1.5rem;
+      padding: 0.5rem 1rem;
+      border-radius: 0.375rem;
+      border: 1px solid #ccc;
+      background-color: #f0f0f0;
+      cursor: pointer;
+    }
+    .time-slot:hover {
+        background-color: #eff6ff; /* blue-50 */
+        cursor: pointer;
+    }
   </style>
 </head>
-<body>
+<body class="bg-gray-100">
   <div id="root"></div>
 
   <script type="text/babel">
-    // --- Helper function for API calls ---
-    const callApi = async ({ api, model, systemPrompt, userPrompt, onChunk, onError }) => {
-        // This helper is now only used by the CBT tool which specifies its own API endpoint.
-        const apiURL = `${window.location.origin}${api}`;
-        const isStreaming = onChunk && typeof onChunk === 'function';
-
-        try {
-            const response = await fetch(apiURL, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ model, systemPrompt, userPrompt, stream: isStreaming }),
-            });
-            if (!response.ok) throw new Error(`API request failed with status ${response.status}`);
-            
-            if (isStreaming) {
-                const reader = response.body.getReader();
-                const decoder = new TextDecoder("utf-8");
-                let fullResponse = "";
-                while (true) {
-                  const { done, value } = await reader.read();
-                  if (done) break;
-                  const chunk = decoder.decode(value);
-                  const lines = chunk.split("\n");
-                  for (const line of lines) {
-                    if (line.startsWith("data: ")) {
-                      const dataStr = line.substring(6).trim();
-                      if (dataStr === "[DONE]") return fullResponse;
-                      try {
-                        const data = JSON.parse(dataStr);
-                        const deltaContent = data.choices[0]?.delta?.content;
-                        if (deltaContent) { fullResponse += deltaContent; onChunk(deltaContent); }
-                      } catch (e) { console.error("Error parsing stream data:", e); }
-                    }
-                  }
-                }
-                return fullResponse;
-            } else {
-                 const data = await response.json();
-                 return data;
-            }
-
-        } catch (err) {
-            onError(err.message);
-            return { error: `对后端服务器的API调用失败: ${err.message}` };
-        }
-    };
-    
-    const downloadTextAsFile = (content, filename) => {
-        const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = filename;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        URL.revokeObjectURL(url);
-    };
-
-    // --- Mock Initial Data ---
-    const initialClients = [
-      { 
-        id: 'client-001', name: '王芳', age: 32, gender: '女', grade: '在职', sexualOrientation: '异性恋',
-        contact: '138********', joinDate: '2023-10-15', referredBy: null, referredClients: ['client-002'],
-        historyOfIllness: '无重大既往史', mentalStateScore: 7, disabilityStatus: '无', religiousBelief: '无',
-        ethnicIdentity: '汉族', personalFinance: '稳定', familyFinance: '良好',
-        sessions: [
-          { 
-            id: 'session-001-1', date: '2023-10-15', summary: '首次访谈，建立咨询关系。',
-            transcript: { name: '首次访谈逐字稿.docx', content: '模拟的逐字稿内容...' },
-            conceptualization: { status: 'Complete', content: 'AI生成的个案概念化报告示例内容...' },
-            assessment: { status: 'Complete', content: 'AI生成的来访者评估报告示例内容...' },
-            supervision: { status: 'Pending', conceptualizationUploaded: false, assessmentUploaded: false, content: null }
-          },
-        ]
-      },
-      { 
-        id: 'client-002', name: '李明', age: 28, gender: '男', grade: '硕士在读', sexualOrientation: '未提供',
-        contact: '159********', joinDate: '2024-01-20', referredBy: 'client-001', referredClients: [],
-        historyOfIllness: '无', mentalStateScore: 5, disabilityStatus: '无', religiousBelief: '无',
-        ethnicIdentity: '汉族', personalFinance: '依赖家庭', familyFinance: '中等',
-        sessions: []
-      },
-    ];
+    const API_BASE_URL = 'http://127.0.0.1:5000';
 
     // --- Main Application Component ---
     const App = () => {
-      const { useState, useEffect } = React;
-      const [activeSection, setActiveSection] = useState('clientManagement');
-      const [clients, setClients] = useState(() => {
-        try { return JSON.parse(localStorage.getItem('psychClients')) || initialClients; } 
-        catch (e) { return initialClients; }
-      });
+      const { useState, useEffect, useCallback } = React;
+      
+      const [clients, setClients] = useState([]);
+      const [counselors, setCounselors] = useState([]);
+      const [appointments, setAppointments] = useState([]);
+      const [currentUser, setCurrentUser] = useState(null);
+      const [isLoading, setIsLoading] = useState(true);
+
+      const [activeSection, setActiveSection] = useState('schedule');
       const [selectedClient, setSelectedClient] = useState(null);
       const [globalLoadingMessage, setGlobalLoadingMessage] = useState('');
+      const [alertInfo, setAlertInfo] = useState({ show: false, message: '' });
+      
+      const showAlert = useCallback((message) => {
+        setAlertInfo({ show: true, message });
+      }, []);
 
-      useEffect(() => { localStorage.setItem('psychClients', JSON.stringify(clients)); }, [clients]);
+      // Function to fetch all data from backend
+      const fetchData = useCallback(async () => {
+          setIsLoading(true);
+          try {
+              const response = await fetch(`${API_BASE_URL}/api/data`);
+              if (!response.ok) throw new Error('Network response was not ok');
+              const data = await response.json();
+              setClients(data.clients);
+              setCounselors(data.counselors);
+              setAppointments(data.appointments);
+          } catch (error) {
+              console.error("Failed to fetch data:", error);
+              showAlert("无法连接到后端服务器，请确保服务器正在运行。");
+          } finally {
+              setIsLoading(false);
+          }
+      }, [showAlert]);
 
-      const handleUpdateClient = (updatedClientData, callback) => {
-        let newClientsState = [...clients];
-        const oldClientState = newClientsState.find(c => c.id === updatedClientData.id);
-        
-        if (oldClientState) {
-            const oldReferredBy = oldClientState.referredBy;
-            const newReferredBy = updatedClientData.referredBy;
-            if (oldReferredBy !== newReferredBy) {
-              if (oldReferredBy) {
-                const oldReferrerIndex = newClientsState.findIndex(c => c.id === oldReferredBy);
-                if (oldReferrerIndex > -1) { newClientsState[oldReferrerIndex].referredClients = newClientsState[oldReferrerIndex].referredClients.filter(id => id !== updatedClientData.id); }
-              }
-              if (newReferredBy) {
-                const newReferrerIndex = newClientsState.findIndex(c => c.id === newReferredBy);
-                if (newReferrerIndex > -1) { if (!newClientsState[newReferrerIndex].referredClients.includes(updatedClientData.id)) { newClientsState[newReferrerIndex].referredClients.push(updatedClientData.id); } }
-              }
-            }
+      // Function to save all data to backend
+      const saveData = useCallback(async (data) => {
+          try {
+              const response = await fetch(`${API_BASE_URL}/api/data`, {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify(data),
+              });
+              if (!response.ok) throw new Error('Failed to save data');
+              // Optionally show a success message
+          } catch (error) {
+              console.error("Failed to save data:", error);
+              showAlert("保存数据失败，请检查服务器连接。");
+          }
+      }, [showAlert]);
+
+      // Effect to fetch initial data on mount
+      useEffect(() => {
+          if (currentUser) {
+              fetchData();
+          }
+      }, [currentUser, fetchData]);
+
+      // Effect to save data whenever it changes
+      useEffect(() => {
+        // We avoid saving on the very first render cycle when data is still being loaded
+        if (!isLoading && currentUser) {
+          saveData({ clients, counselors, appointments });
         }
-        
-        const clientIndex = newClientsState.findIndex(c => c.id === updatedClientData.id);
-        if (clientIndex > -1) { newClientsState[clientIndex] = updatedClientData; } 
-        else {
-            newClientsState.push(updatedClientData);
-            const newReferredBy = updatedClientData.referredBy;
-            if (newReferredBy) {
-                const newReferrerIndex = newClientsState.findIndex(c => c.id === newReferredBy);
-                if (newReferrerIndex > -1 && !newClientsState[newReferrerIndex].referredClients.includes(updatedClientData.id)) {
-                    newClientsState[newReferrerIndex].referredClients.push(updatedClientData.id);
-                }
+      }, [clients, counselors, appointments, isLoading, currentUser, saveData]);
+      
+      const handleRegister = async (username, password) => {
+        try {
+            const response = await fetch(`${API_BASE_URL}/api/register`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ username, password }),
+            });
+            const data = await response.json();
+            if (response.ok) {
+                setCurrentUser({ username });
+                showAlert(data.message);
+                return true;
+            } else {
+                showAlert(data.message);
+                return false;
             }
+        } catch (error) {
+            showAlert('注册请求失败，请检查服务器。');
+            return false;
         }
-        
-        setClients(newClientsState);
-        if (selectedClient?.id === updatedClientData.id || !oldClientState) { setSelectedClient(updatedClientData); }
-        if (callback) callback(updatedClientData);
       };
 
-      const handleAddClient = (newClient, clientToEdit) => {
-        if(clientToEdit) {
-          handleUpdateClient(newClient, clientToEdit);
-        } else {
-          const clientWithDefaults = { ...newClient, id: `client-${Date.now()}`, sessions: [], joinDate: new Date().toISOString().split('T')[0], referredBy: newClient.referredBy || null, referredClients: [] };
-          handleUpdateClient(clientWithDefaults, null, true);
+      const handleLogin = async (username, password) => {
+        try {
+            const response = await fetch(`${API_BASE_URL}/api/login`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ username, password }),
+            });
+            const data = await response.json();
+            if (response.ok) {
+                setCurrentUser({ username });
+                showAlert(data.message);
+                return true;
+            } else {
+                showAlert(data.message);
+                return 'user_not_found'; // Special signal for UI to switch to register
+            }
+        } catch(error) {
+            showAlert('登录请求失败，请检查服务器。');
+            return false;
         }
+      };
+      
+      const handleLogout = () => {
+          setCurrentUser(null);
+      }
+
+      const handleUpdateClient = (updatedClientData, callback) => {
+        setClients(prevClients => {
+            let newClientsState = [...prevClients];
+            const oldClientState = newClientsState.find(c => c.id === updatedClientData.id);
+            if (oldClientState) {
+                const oldReferredBy = oldClientState.referredBy;
+                const newReferredBy = updatedClientData.referredBy;
+                if (oldReferredBy !== newReferredBy) {
+                  if (oldReferredBy) {
+                    const oldReferrerIndex = newClientsState.findIndex(c => c.id === oldReferredBy);
+                    if (oldReferrerIndex > -1) { newClientsState[oldReferrerIndex].referredClients = newClientsState[oldReferrerIndex].referredClients.filter(id => id !== updatedClientData.id); }
+                  }
+                  if (newReferredBy) {
+                    const newReferrerIndex = newClientsState.findIndex(c => c.id === newReferredBy);
+                    if (newReferrerIndex > -1 && !newClientsState[newReferrerIndex].referredClients.includes(updatedClientData.id)) { newClientsState[newReferrerIndex].referredClients.push(updatedClientData.id); }
+                  }
+                }
+            }
+            const clientIndex = newClientsState.findIndex(c => c.id === updatedClientData.id);
+            if (clientIndex > -1) {
+                newClientsState[clientIndex] = updatedClientData;
+            } else {
+                newClientsState.push(updatedClientData);
+                const newReferredBy = updatedClientData.referredBy;
+                if (newReferredBy) {
+                    const newReferrerIndex = newClientsState.findIndex(c => c.id === newReferredBy);
+                    if (newReferrerIndex > -1 && !newClientsState[newReferrerIndex].referredClients.includes(updatedClientData.id)) {
+                        newClientsState[newReferrerIndex].referredClients.push(updatedClientData.id);
+                    }
+                }
+            }
+            if (selectedClient?.id === updatedClientData.id || !oldClientState) {
+                setSelectedClient(updatedClientData);
+            }
+            if (callback) callback(updatedClientData);
+            return newClientsState;
+        });
+      };
+
+
+      const handleAddClient = (newClientData, clientToEdit) => {
+          if (clientToEdit) {
+              handleUpdateClient({ ...clientToEdit, ...newClientData });
+          } else {
+              const clientWithDefaults = {
+                  ...newClientData,
+                  id: `client-${Date.now()}`,
+                  sessions: [],
+                  joinDate: new Date().toISOString().split('T')[0],
+                  referredBy: newClientData.referredBy || null,
+                  referredClients: [],
+              };
+              handleUpdateClient(clientWithDefaults);
+          }
       };
       
       const handleDeleteClient = (clientId) => {
         const clientToDelete = clients.find(c => c.id === clientId);
         if (!clientToDelete) return;
-        let updatedClients = clients.filter(client => client.id !== clientId);
-        updatedClients = updatedClients.map(client => {
-          if (client.referredBy === clientId) { return { ...client, referredBy: null }; }
-          if (client.referredClients.includes(clientId)) { return { ...client, referredClients: client.referredClients.filter(id => id !== clientId) }; }
-          return client;
-        });
-        console.warn(`尝试删除来访者 ${clientToDelete?.name}。`);
-        setClients(updatedClients);
-        if (selectedClient?.id === clientId) { setSelectedClient(null); setActiveSection('clientManagement'); }
+
+        setClients(prev => prev.filter(client => client.id !== clientId));
+        setCounselors(prev => prev.map(counselor => ({
+            ...counselor,
+            assignedClientIds: counselor.assignedClientIds.filter(id => id !== clientId)
+        })));
+        setAppointments(prev => prev.filter(appt => appt.clientId !== clientId));
+
+        showAlert(`来访者 ${clientToDelete?.name} 已被删除。`);
+        if (selectedClient?.id === clientId) {
+            setSelectedClient(null);
+            setActiveSection('clientManagement');
+        }
+      };
+      
+      const handleUpdateCounselors = (updatedCounselors) => {
+          setCounselors(updatedCounselors);
+      };
+
+      const handleDeleteCounselor = (counselorId) => {
+          if (appointments.some(appt => appt.counselorId === counselorId)) {
+              showAlert('无法删除该咨询师，因为其仍有关联的日程安排。请先移除相关日程。');
+              return;
+          }
+          setCounselors(prev => prev.filter(c => c.id !== counselorId));
+          showAlert('咨询师已删除。');
+      };
+
+      const handleUpdateAppointments = (appointmentData, isDelete = false) => {
+            if (isDelete) {
+                setAppointments(prev => prev.filter(appt => appt.id !== appointmentData.id));
+            } else {
+                setAppointments(prev => {
+                    const existingIndex = prev.findIndex(appt => appt.id === appointmentData.id);
+                    if (existingIndex > -1) {
+                        const updated = [...prev];
+                        updated[existingIndex] = appointmentData;
+                        return updated;
+                    } else {
+                       return [...prev, {...appointmentData, id: `appt-${Date.now()}`}];
+                    }
+                });
+            }
       };
 
       const handleSelectClient = (client) => { setSelectedClient(client); setActiveSection('clientDetail'); };
       
+      const navItems = [
+          { id: 'clientManagement', label: '来访者管理', icon: '👥' },
+          { id: 'counselorManagement', label: '咨询师管理', icon: '🧑‍🏫' },
+          { id: 'schedule', label: '咨询日程', icon: '🗓️' },
+          { id: 'cbtApplication', label: '辅助工具', icon: '🧠' }
+      ];
+
       const renderSection = () => {
+        if (isLoading) {
+            return <div className="text-center p-10">正在加载数据...</div>;
+        }
         switch (activeSection) {
           case 'clientManagement':
             return <ClientManagementSection clients={clients} onAddClient={handleAddClient} onSelectClient={handleSelectClient} />;
+          case 'counselorManagement':
+            return <CounselorManagementSection counselors={counselors} clients={clients} appointments={appointments} onUpdateCounselors={handleUpdateCounselors} onDeleteCounselor={handleDeleteCounselor} />;
+          case 'schedule':
+            return <ScheduleSection appointments={appointments} clients={clients} counselors={counselors} onUpdateAppointments={handleUpdateAppointments} />;
           case 'clientDetail':
             return selectedClient ? 
                    <ClientDetailView 
-                      key={selectedClient.id} 
+                      key={selectedClient.id + JSON.stringify(selectedClient.sessions)} 
                       client={selectedClient} 
                       allClients={clients} 
                       onUpdateClient={handleUpdateClient} 
                       onDeleteClient={handleDeleteClient}
+                      globalLoadingMessage={globalLoadingMessage}
                       setGlobalLoadingMessage={setGlobalLoadingMessage}
+                      showAlert={showAlert}
                     /> : 
-                   <div className="text-center p-10 text-gray-500">请先从列表中选择一位来访者。</div>;
+                   <div className="text-center p-10 text-gray-500">请先返回来访者列表选择一位来访者。</div>;
           case 'cbtApplication':
-            return <CBTSection />;
+            return <CBTSection showAlert={showAlert}/>;
           default:
-            return <ClientManagementSection clients={clients} onAddClient={handleAddClient} onSelectClient={handleSelectClient} />;
+            return <ScheduleSection appointments={appointments} clients={clients} counselors={counselors} onUpdateAppointments={handleUpdateAppointments} />;
         }
       };
 
+      if (!currentUser) {
+          return <AuthModal onLogin={handleLogin} onRegister={handleRegister} showAlert={showAlert} />;
+      }
+
       return (
-        <div className="min-h-screen bg-gray-100 flex flex-col">
-          <div className="bg-gray-800 text-white shadow-lg"><div className="container mx-auto px-4"><div className="flex items-center justify-between h-16"><div className="flex items-center"><span className="text-2xl mr-3">💌</span><h1 className="text-xl font-bold">心理咨询师助手</h1></div><div><button onClick={()=>setActiveSection('clientManagement')} className={`px-3 py-2 rounded-md text-sm font-medium flex items-center ${activeSection!=='cbtApplication'?'bg-gray-900':'text-gray-300 hover:bg-gray-700'}`}><span className="mr-2">👥</span>来访者管理</button><button onClick={()=>setActiveSection('cbtApplication')} className={`px-3 py-2 ml-4 rounded-md text-sm font-medium flex items-center ${activeSection==='cbtApplication'?'bg-gray-900':'text-gray-300 hover:bg-gray-700'}`}><span className="mr-2">🧠</span>咨询流程辅助工具</button></div></div></div></div>
-          {globalLoadingMessage && (<div className="bg-yellow-400 text-yellow-800 text-center p-2 animate-pulse flex items-center justify-center"><span className="mr-2">⏳</span>{globalLoadingMessage}</div>)}
+        <div className="min-h-screen bg-gray-50 flex flex-col">
+          {alertInfo.show && (
+            <div className="alert-modal animate-fadeIn" onClick={() => setAlertInfo({ show: false, message: '' })}>
+              <div className="alert-modal-content" onClick={(e) => e.stopPropagation()}>
+                <p>{alertInfo.message}</p>
+                <button className="alert-modal-button" onClick={() => setAlertInfo({ show: false, message: '' })}>关闭</button>
+              </div>
+            </div>
+          )}
+          <header className="bg-white shadow-sm sticky top-0 z-40"><div className="container mx-auto px-4"><div className="flex items-center justify-between h-16">
+          <button onClick={() => setActiveSection('schedule')} className="flex items-center cursor-pointer">
+            <span className="text-2xl mr-3">💌</span>
+            <h1 className="text-xl font-bold text-gray-800">心理咨询师助手</h1>
+          </button>
+          <div className="flex items-center gap-4">
+            <nav className="flex items-center space-x-1">
+                {navItems.map(item => (
+                    <button 
+                        key={item.id} 
+                        onClick={()=>setActiveSection(item.id)} 
+                        className={`px-3 py-2 rounded-md text-sm font-medium flex items-center transition-colors duration-200 ${activeSection === item.id || (activeSection === 'clientDetail' && item.id === 'clientManagement') ? 'bg-gray-100 text-blue-600' : 'text-gray-500 hover:bg-gray-100'}`}
+                    >
+                        <span className="mr-2">{item.icon}</span>{item.label}
+                    </button>
+                ))}
+            </nav>
+            <div className="border-l pl-4">
+                <button onClick={handleLogout} className="text-sm font-medium text-gray-500 hover:text-red-600">登出</button>
+            </div>
+           </div>
+          </div></div></header>
+          {globalLoadingMessage && (<div className="bg-yellow-100 text-yellow-800 text-center p-2 animate-pulse flex items-center justify-center sticky top-16 z-30"><span className="mr-2">⏳</span>{globalLoadingMessage}</div>)}
           <main className="flex-grow container mx-auto p-4 sm:p-6 lg:p-8">{renderSection()}</main>
         </div>
       );
+    };
+    
+    // --- Components ---
+    
+    const AuthModal = ({ onLogin, onRegister, showAlert }) => {
+        const { useState } = React;
+        const [mode, setMode] = useState('login'); // login or register
+        const [username, setUsername] = useState('');
+        const [password, setPassword] = useState('');
+        const [confirmPassword, setConfirmPassword] = useState('');
+
+        const handleLoginAttempt = async (e) => {
+            e.preventDefault();
+            if (!username || !password) {
+                showAlert('请输入用户名和密码。');
+                return;
+            }
+            const result = await onLogin(username, password);
+            if (result === 'user_not_found') {
+                 showAlert('用户不存在，请先注册。');
+                 setMode('register');
+            } else if (result === false) {
+                 showAlert('密码错误！');
+            }
+        };
+        
+        const handleRegisterAttempt = async (e) => {
+            e.preventDefault();
+            if (!username || !password || !confirmPassword) {
+                showAlert('请填写所有字段。');
+                return;
+            }
+            if (password !== confirmPassword) {
+                showAlert('两次输入的密码不匹配！');
+                return;
+            }
+            await onRegister(username, password);
+        };
+
+        return (
+            <div className="min-h-screen bg-gray-100 flex items-center justify-center p-4">
+                <div className="w-full max-w-md bg-white rounded-lg shadow-xl p-8 animate-fadeIn">
+                   {mode === 'login' ? (
+                       <div>
+                           <h2 className="text-2xl font-bold text-center text-gray-800 mb-6">登录</h2>
+                           <form onSubmit={handleLoginAttempt} className="space-y-4">
+                               <div><label className="text-sm font-medium text-gray-700">用户名</label><input type="text" value={username} onChange={e => setUsername(e.target.value)} className="w-full p-2 mt-1 border rounded-md" /></div>
+                               <div><label className="text-sm font-medium text-gray-700">密码</label><input type="password" value={password} onChange={e => setPassword(e.target.value)} className="w-full p-2 mt-1 border rounded-md" /></div>
+                               <button type="submit" className="w-full bg-blue-600 text-white py-2 rounded-md hover:bg-blue-700 font-semibold">登录</button>
+                           </form>
+                           <p className="text-xs text-center text-gray-500 mt-4">没有账户？ <button onClick={() => setMode('register')} className="text-blue-600 hover:underline">点击注册</button></p>
+                       </div>
+                   ) : (
+                       <div>
+                           <h2 className="text-2xl font-bold text-center text-gray-800 mb-6">注册</h2>
+                           <form onSubmit={handleRegisterAttempt} className="space-y-4">
+                               <div><label className="text-sm font-medium text-gray-700">用户名</label><input type="text" value={username} onChange={e => setUsername(e.target.value)} className="w-full p-2 mt-1 border rounded-md" /></div>
+                               <div><label className="text-sm font-medium text-gray-700">密码</label><input type="password" value={password} onChange={e => setPassword(e.target.value)} className="w-full p-2 mt-1 border rounded-md" /></div>
+                               <div><label className="text-sm font-medium text-gray-700">确认密码</label><input type="password" value={confirmPassword} onChange={e => setConfirmPassword(e.target.value)} className="w-full p-2 mt-1 border rounded-md" /></div>
+                               <button type="submit" className="w-full bg-blue-600 text-white py-2 rounded-md hover:bg-blue-700 font-semibold">注册</button>
+                           </form>
+                           <p className="text-xs text-center text-gray-500 mt-4">已有账户？ <button onClick={() => setMode('login')} className="text-blue-600 hover:underline">返回登录</button></p>
+                       </div>
+                   )}
+                </div>
+            </div>
+        );
+    };
+
+    const CounselorManagementSection = ({ counselors, clients, appointments, onUpdateCounselors, onDeleteCounselor }) => {
+        const { useState, useMemo } = React;
+        const [showAddModal, setShowAddModal] = useState(false);
+        const [counselorToEdit, setCounselorToEdit] = useState(null);
+
+        const counselorsWithHours = useMemo(() => {
+            const currentMonth = new Date().getMonth();
+            const currentYear = new Date().getFullYear();
+            return counselors.map(counselor => {
+                const monthlyHours = appointments.filter(appt => {
+                    const apptDate = new Date(appt.date);
+                    return appt.counselorId === counselor.id &&
+                           apptDate.getMonth() === currentMonth &&
+                           apptDate.getFullYear() === currentYear;
+                }).length; // Each appointment is 1 hour
+                const totalHours = appointments.filter(appt => appt.counselorId === counselor.id).length;
+                return { ...counselor, monthlyHours, totalHours };
+            });
+        }, [counselors, appointments]);
+
+        const handleSaveCounselor = (counselorData) => {
+            let updatedList;
+            if (counselorToEdit) {
+                updatedList = counselors.map(c => c.id === counselorData.id ? counselorData : c);
+            } else {
+                updatedList = [...counselors, { ...counselorData, id: `counselor-${Date.now()}`, assignedClientIds: counselorData.assignedClientIds || [] }];
+            }
+            onUpdateCounselors(updatedList);
+            setShowAddModal(false);
+            setCounselorToEdit(null);
+        };
+
+        const openEditModal = (counselor) => {
+            setCounselorToEdit(counselor);
+            setShowAddModal(true);
+        };
+
+        return (
+            <div className="bg-white p-6 rounded-lg shadow-md animate-fadeIn">
+                <div className="flex justify-between items-center mb-6 pb-4 border-b"><h2 className="text-2xl font-semibold text-gray-700 flex items-center"><span className="mr-3 text-2xl">🧑‍🏫</span>咨询师管理</h2><button onClick={() => { setCounselorToEdit(null); setShowAddModal(true); }} className="bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2 px-4 rounded-lg flex items-center shadow-sm"><span className="mr-2">➕</span>添加咨询师</button></div>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    {counselorsWithHours.map(counselor => {
+                        const assignedClients = clients.filter(client => counselor.assignedClientIds?.includes(client.id));
+                        return (
+                            <div key={counselor.id} className="bg-gray-50 border rounded-lg p-4 flex flex-col">
+                                <div className="flex-grow">
+                                    <div className="flex justify-between items-start">
+                                        <div>
+                                            <h3 className="text-xl font-bold text-blue-700">{counselor.name}</h3>
+                                            <p className="text-sm text-gray-600 mt-1">{counselor.modality}</p>
+                                        </div>
+                                        <div className="text-right flex gap-4">
+                                            <div>
+                                                <p className="text-sm text-gray-600">本月</p>
+                                                <p className="text-2xl font-bold text-blue-800">{counselor.monthlyHours} <span className="text-base font-normal">小时</span></p>
+                                            </div>
+                                             <div>
+                                                <p className="text-sm text-gray-600">职业总计</p>
+                                                <p className="text-2xl font-bold text-gray-800">{counselor.totalHours} <span className="text-base font-normal">小时</span></p>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <p className="text-sm text-gray-500 mt-2 mb-4">{counselor.email}</p>
+                                    
+                                    <h4 className="text-sm font-bold text-gray-700 mt-4 border-t pt-3">负责来访:</h4>
+                                    {assignedClients.length > 0 ? (
+                                        <div className="flex flex-wrap gap-2 mt-2">
+                                            {assignedClients.map(client => <span key={client.id} className="text-xs bg-gray-200 text-gray-800 px-2 py-1 rounded-full">{client.name}</span>)}
+                                        </div>
+                                    ) : <p className="text-xs text-gray-500 mt-2">暂无</p>}
+                                </div>
+                                <div className="flex justify-end space-x-2 mt-4 pt-4 border-t">
+                                    <button onClick={() => openEditModal(counselor)} className="text-xs font-medium text-blue-600 hover:underline">编辑</button>
+                                    <button onClick={() => onDeleteCounselor(counselor.id)} className="text-xs font-medium text-red-600 hover:underline">删除</button>
+                                </div>
+                            </div>
+                        )
+                    })}
+                </div>
+                 {counselors.length === 0 && <p className="text-center text-gray-500 py-8">暂无咨询师信息。</p>}
+                {showAddModal && <AddCounselorModal onClose={() => { setShowAddModal(false); setCounselorToEdit(null); }} onSave={handleSaveCounselor} counselorToEdit={counselorToEdit} allClients={clients} />}
+            </div>
+        );
+    };
+
+    const AddCounselorModal = ({ onClose, onSave, counselorToEdit, allClients }) => {
+        const { useState, useRef, useEffect } = React;
+        const [formData, setFormData] = useState({
+            name: counselorToEdit?.name || '',
+            modality: counselorToEdit?.modality || '',
+            email: counselorToEdit?.email || '',
+            assignedClientIds: counselorToEdit?.assignedClientIds || [],
+        });
+        const [isDragging, setIsDragging] = useState(false);
+        const dragStartClientId = useRef(null);
+
+        const handleClientSelection = (clientId) => {
+             setFormData(prev => {
+                const newIds = prev.assignedClientIds.includes(clientId)
+                    ? prev.assignedClientIds.filter(id => id !== clientId)
+                    : [...prev.assignedClientIds, clientId];
+                return {...prev, assignedClientIds: newIds};
+            });
+        };
+
+        const handleMouseDown = (e, clientId) => {
+            e.preventDefault();
+            setIsDragging(true);
+            dragStartClientId.current = clientId;
+            handleClientSelection(clientId);
+        };
+
+        const handleMouseOver = (clientId) => {
+            if (isDragging) {
+                 const currentAssigned = formData.assignedClientIds;
+                 if(!currentAssigned.includes(clientId)) {
+                    handleClientSelection(clientId);
+                 }
+            }
+        };
+
+        const handleMouseUp = () => {
+            setIsDragging(false);
+            dragStartClientId.current = null;
+        };
+        
+        useEffect(() => {
+            const mouseUpHandler = () => handleMouseUp();
+            window.addEventListener('mouseup', mouseUpHandler);
+            return () => window.removeEventListener('mouseup', mouseUpHandler);
+        }, []);
+
+
+        const handleChange = (e) => {
+            const { name, value } = e.target;
+            setFormData(prev => ({...prev, [name]: value}));
+        };
+
+        const handleSubmit = (e) => {
+            e.preventDefault();
+            if (!formData.name.trim()) { alert('姓名不能为空'); return; }
+            onSave({ ...counselorToEdit, ...formData });
+        };
+
+        return (
+             <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50 animate-fadeIn">
+              <div className="bg-white p-6 rounded-lg shadow-2xl w-full max-w-lg">
+                <div className="flex justify-between items-center mb-4 pb-2 border-b"><h3 className="text-xl font-semibold">{counselorToEdit ? '编辑' : '添加'}咨询师</h3><button onClick={onClose} className="text-gray-500 hover:text-red-500">❌</button></div>
+                <form onSubmit={handleSubmit} className="space-y-4" onMouseUp={handleMouseUp}>
+                  <div><label className="block text-sm font-medium">姓名 <span className="text-red-500">*</span></label><input type="text" name="name" value={formData.name} onChange={handleChange} required className="w-full p-2 border rounded-md" /></div>
+                  <div><label className="block text-sm font-medium">擅长咨询流派</label><input type="text" name="modality" value={formData.modality} onChange={handleChange} className="w-full p-2 border rounded-md" /></div>
+                  <div><label className="block text-sm font-medium">邮箱</label><input type="email" name="email" value={formData.email} onChange={handleChange} className="w-full p-2 border rounded-md" /></div>
+                  
+                  <div>
+                    <label className="block text-sm font-medium">负责来访 (可点击或滑动选择)</label>
+                    <div className="max-h-32 overflow-y-auto border rounded-md p-2 mt-1 select-none">
+                        {allClients.map(client => (
+                            <div 
+                                key={client.id} 
+                                onMouseDown={(e) => handleMouseDown(e, client.id)}
+                                onMouseOver={() => handleMouseOver(client.id)}
+                                className={`p-1 rounded cursor-pointer ${formData.assignedClientIds.includes(client.id) ? 'bg-blue-200' : 'hover:bg-gray-100'}`}
+                            >
+                                <span className="text-sm text-gray-800">{client.name}</span>
+                            </div>
+                        ))}
+                    </div>
+                  </div>
+
+                  <div className="flex justify-end space-x-3 pt-4"><button type="button" onClick={onClose} className="px-4 py-2 bg-gray-200 hover:bg-gray-300 rounded-md border">取消</button><button type="submit" className="px-4 py-2 text-white bg-blue-600 hover:bg-blue-700 rounded-md flex items-center shadow-sm"><span className="mr-2">💾</span>保存</button></div>
+                </form>
+              </div>
+            </div>
+        );
+    };
+
+    const ScheduleSection = ({ appointments, clients, counselors, onUpdateAppointments }) => {
+        const { useState } = React;
+        const [view, setView] = useState('daily'); // 'daily' or 'overview'
+        const [currentDate, setCurrentDate] = useState(new Date());
+        const [showModal, setShowModal] = useState(false);
+        const [modalDetails, setModalDetails] = useState({ date: null, time: null, location: '' });
+
+        const openAppointmentModal = (date, time, location) => {
+            setModalDetails({ date: date || currentDate.toISOString().split('T')[0], time: time || '09:00', location: location || '' });
+            setShowModal(true);
+        };
+        
+        const handleSaveAppointment = (appointmentData) => {
+            onUpdateAppointments(appointmentData);
+            setShowModal(false);
+        };
+
+        return (
+            <div className="bg-white p-6 rounded-lg shadow-md animate-fadeIn">
+                <div className="flex justify-between items-center mb-6 pb-4 border-b">
+                   <h2 className="text-2xl font-semibold text-gray-700 flex items-center"><span className="mr-3 text-2xl">🗓️</span>咨询日程</h2>
+                   <div className="flex items-center gap-4">
+                       <div className="flex items-center bg-gray-100 rounded-lg p-1">
+                           <button onClick={() => setView('daily')} className={`px-3 py-1 text-sm rounded-md ${view === 'daily' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-600'}`}>每日视图</button>
+                           <button onClick={() => setView('overview')} className={`px-3 py-1 text-sm rounded-md ${view === 'overview' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-600'}`}>三月总览</button>
+                       </div>
+                       <button onClick={() => openAppointmentModal()} className="bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2 px-4 rounded-lg flex items-center shadow-sm"><span className="mr-2">➕</span>添加日程</button>
+                   </div>
+                </div>
+                
+                {view === 'daily' ? (
+                    <ScheduleDailyView 
+                        currentDate={currentDate}
+                        setCurrentDate={setCurrentDate}
+                        appointments={appointments}
+                        clients={clients}
+                        counselors={counselors}
+                        onOpenModal={openAppointmentModal}
+                    />
+                ) : (
+                    <ScheduleOverview appointments={appointments} />
+                )}
+
+                {showModal && <AppointmentModal 
+                    onClose={() => setShowModal(false)}
+                    onSave={handleSaveAppointment}
+                    date={modalDetails.date}
+                    time={modalDetails.time}
+                    location={modalDetails.location}
+                    clients={clients}
+                    counselors={counselors}
+                />}
+            </div>
+        );
+    };
+    
+    const ScheduleDailyView = ({ currentDate, setCurrentDate, appointments, clients, counselors, onOpenModal }) => {
+        const { useMemo } = React;
+        const changeDay = (offset) => {
+            setCurrentDate(prev => {
+                const newDate = new Date(prev);
+                newDate.setDate(prev.getDate() + offset);
+                return newDate;
+            });
+        };
+        
+        const appointmentsForDay = useMemo(() => {
+            const dateStr = currentDate.toISOString().split('T')[0];
+            return appointments.filter(appt => appt.date === dateStr);
+        }, [appointments, currentDate]);
+
+        const renderHourlySchedule = () => {
+            const hours = Array.from({length: 15}, (_, i) => 8 + i); // 8:00 to 22:00
+            const dateStr = currentDate.toISOString().split('T')[0];
+
+            return hours.map(hour => {
+                const timeStr = `${String(hour).padStart(2, '0')}:00`;
+                const appointment = appointmentsForDay.find(a => a.time === timeStr);
+                
+                return (
+                    <tr key={hour} className="border-b">
+                        <td className="p-2 w-24 text-center text-sm text-gray-500 align-top">{timeStr}</td>
+                        <td 
+                            className="p-1 time-slot"
+                            onClick={() => !appointment && onOpenModal(dateStr, timeStr)}
+                        >
+                            {appointment ? (
+                                <div className="bg-blue-100 border-l-4 border-blue-500 p-2 rounded-r-lg">
+                                    <p className="font-bold text-sm text-blue-800">{clients.find(c => c.id === appointment.clientId)?.name}</p>
+                                    <p className="text-xs text-gray-600">咨询师: {counselors.find(c => c.id === appointment.counselorId)?.name}</p>
+                                    {appointment.location && <p className="text-xs text-gray-600">地点: {appointment.location}</p>}
+                                    <p className="text-xs text-gray-500 mt-1">{appointment.notes}</p>
+                                </div>
+                            ) : null}
+                        </td>
+                    </tr>
+                );
+            });
+        };
+
+        return (
+            <div>
+                 <div className="flex justify-between items-center mb-4">
+                    <button onClick={() => changeDay(-1)} className="p-2 rounded-md hover:bg-gray-100">❮ 前一天</button>
+                    <h3 className="text-xl font-semibold text-gray-700">{currentDate.toLocaleDateString('zh-CN', { year: 'numeric', month: 'long', day: 'numeric' })}</h3>
+                    <button onClick={() => changeDay(1)} className="p-2 rounded-md hover:bg-gray-100">后一天 ❯</button>
+                </div>
+                <div className="border rounded-lg overflow-hidden">
+                    <table className="w-full">
+                        <thead className="bg-gray-50">
+                            <tr>
+                                <th className="p-2 w-24 text-sm font-medium text-gray-600">时间</th>
+                                <th className="p-2 text-sm font-medium text-gray-600 text-left">安排</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {renderHourlySchedule()}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        )
+    };
+    
+    const ScheduleOverview = ({ appointments }) => {
+        const { useMemo } = React;
+        const appointmentsByDate = useMemo(() => {
+            return appointments.reduce((acc, appt) => {
+                (acc[appt.date] = acc[appt.date] || []).push(appt);
+                return acc;
+            }, {});
+        }, [appointments]);
+
+        const renderMonth = (date) => {
+            const year = date.getFullYear();
+            const month = date.getMonth();
+            const firstDay = new Date(year, month, 1).getDay();
+            const daysInMonth = new Date(year, month + 1, 0).getDate();
+            const days = [];
+            
+            for (let i = 0; i < firstDay; i++) {
+                days.push(<div key={`empty-${i}`} className="border-t border-l"></div>);
+            }
+
+            for (let day = 1; day <= daysInMonth; day++) {
+                const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+                const dayAppointments = appointmentsByDate[dateStr] || [];
+                const appointmentCount = dayAppointments.length;
+                const counselorCount = new Set(dayAppointments.map(a => a.counselorId)).size;
+
+                days.push(
+                    <div key={day} className="border-t border-l p-1 text-sm h-20 flex flex-col">
+                        <div className={`self-start ${new Date(dateStr).toDateString() === new Date().toDateString() ? 'bg-blue-600 text-white rounded-full h-6 w-6 flex items-center justify-center' : ''}`}>{day}</div>
+                        {appointmentCount > 0 && 
+                            <div className="flex-grow flex items-end justify-end gap-2 text-xs font-bold">
+                                <span className="text-blue-600" title="单日咨询数量">{appointmentCount}</span>
+                                <span className="text-red-600" title="在岗咨询师数量">{counselorCount}</span>
+                            </div>
+                        }
+                    </div>
+                );
+            }
+            return (
+                <div>
+                    <h3 className="text-lg font-semibold text-center mb-2">{date.toLocaleDateString('zh-CN', { month: 'long' })}</h3>
+                    <div className="grid grid-cols-7 text-xs text-center border-r border-b">
+                         {['日', '一', '二', '三', '四', '五', '六'].map(d => <div key={d} className="border-t border-l font-bold p-1 bg-gray-50">{d}</div>)}
+                         {days}
+                    </div>
+                </div>
+            )
+        };
+        
+        const today = new Date();
+        const month1 = new Date(today.getFullYear(), today.getMonth(), 1);
+        const month2 = new Date(today.getFullYear(), today.getMonth() + 1, 1);
+        const month3 = new Date(today.getFullYear(), today.getMonth() + 2, 1);
+        
+        return (
+            <div>
+                <div className="flex justify-end gap-4 text-xs mb-2">
+                    <span><span className="font-bold text-blue-600">■</span> 单日咨询数量</span>
+                    <span><span className="font-bold text-red-600">■</span> 单日咨询师在岗</span>
+                </div>
+                <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                    {renderMonth(month1)}
+                    {renderMonth(month2)}
+                    {renderMonth(month3)}
+                </div>
+            </div>
+        );
+    };
+    
+    const AppointmentModal = ({ onClose, onSave, date, time, location, clients, counselors }) => {
+        const { useState } = React;
+        const [formData, setFormData] = useState({
+            date: date,
+            time: time,
+            location: location || '',
+            clientId: clients[0]?.id || '',
+            counselorId: counselors[0]?.id || '',
+            notes: '',
+        });
+        
+        const handleChange = (e) => {
+            const { name, value } = e.target;
+            setFormData(prev => ({...prev, [name]: value}));
+        };
+
+        const handleSubmit = (e) => {
+            e.preventDefault();
+            if (!formData.clientId || !formData.counselorId) {
+                alert('请选择来访者和咨询师');
+                return;
+            }
+            onSave(formData);
+        };
+
+        return (
+            <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50 animate-fadeIn">
+                <div className="bg-white p-6 rounded-lg shadow-2xl w-full max-w-md">
+                    <div className="flex justify-between items-center mb-4 pb-2 border-b">
+                        <h3 className="text-xl font-semibold">添加/编辑日程</h3>
+                        <button onClick={onClose} className="text-gray-500 hover:text-red-500">❌</button>
+                    </div>
+                    <form onSubmit={handleSubmit} className="space-y-4">
+                        <div><label className="block text-sm font-medium">日期</label><input type="date" name="date" value={formData.date} onChange={handleChange} required className="w-full p-2 border rounded-md"/></div>
+                        <div><label className="block text-sm font-medium">时间</label><input type="time" name="time" value={formData.time} onChange={handleChange} required className="w-full p-2 border rounded-md" step="3600"/></div>
+                        <div><label className="block text-sm font-medium">咨询地点</label><input type="text" name="location" value={formData.location} onChange={handleChange} placeholder="例如：咨询室 201 或 线上会议" className="w-full p-2 border rounded-md"/></div>
+                        <div><label className="block text-sm font-medium">来访者</label><select name="clientId" value={formData.clientId} onChange={handleChange} className="w-full p-2 border rounded-md">{clients.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</select></div>
+                        <div><label className="block text-sm font-medium">咨询师</label><select name="counselorId" value={formData.counselorId} onChange={handleChange} className="w-full p-2 border rounded-md">{counselors.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</select></div>
+                        <div><label className="block text-sm font-medium">备注</label><textarea name="notes" value={formData.notes} onChange={handleChange} rows="3" className="w-full p-2 border rounded-md"></textarea></div>
+                        <div className="flex justify-end space-x-3 pt-4"><button type="button" onClick={onClose} className="px-4 py-2 bg-gray-200 hover:bg-gray-300 rounded-md border">取消</button><button type="submit" className="px-4 py-2 text-white bg-blue-600 hover:bg-blue-700 rounded-md flex items-center shadow-sm"><span className="mr-2">💾</span>保存</button></div>
+                    </form>
+                </div>
+            </div>
+        );
     };
 
     const ClientManagementSection = ({ clients, onAddClient, onSelectClient }) => {
@@ -218,13 +846,13 @@
         const [searchTerm, setSearchTerm] = useState('');
         const filteredClients = clients.filter(client => client.name.toLowerCase().includes(searchTerm.toLowerCase()));
         return (
-            <div className="bg-white p-6 rounded-xl shadow-xl animate-fadeIn">
-            <div className="flex justify-between items-center mb-6 pb-4 border-b"><h2 className="text-2xl font-semibold text-gray-700 flex items-center"><span className="mr-3 text-2xl">👥</span>来访者管理</h2><button onClick={() => setShowAddClientModal(true)} className="bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2 px-4 rounded-lg flex items-center"><span className="mr-2">➕</span>添加新来访</button></div>
-            <input type="text" placeholder="搜索来访者姓名..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="w-full p-3 mb-4 border rounded-lg"/>
-            {filteredClients.length > 0 ? (
-                <ul className="space-y-3">{filteredClients.map(client => (<li key={client.id} onClick={() => onSelectClient(client)} className="bg-gray-50 hover:bg-blue-50 border rounded-lg p-4 cursor-pointer flex justify-between items-center"><div><p className="text-lg font-medium text-blue-700">{client.name} <span className="text-sm text-gray-500">({client.gender}, {client.age}岁)</span></p><p className="text-sm text-gray-600">加入日期: {client.joinDate}</p></div><span className="text-gray-400">❯</span></li>))}</ul>
-            ) : <p className="text-center text-gray-500 py-8">暂无匹配的来访者。</p>}
-            {showAddClientModal && <AddClientModal onClose={() => setShowAddClientModal(false)} onAddClient={onAddClient} allClients={clients} />}
+            <div className="bg-white p-6 rounded-lg shadow-md animate-fadeIn">
+                <div className="flex justify-between items-center mb-6 pb-4 border-b"><h2 className="text-2xl font-semibold text-gray-700 flex items-center"><span className="mr-3 text-2xl">👥</span>来访者管理</h2><button onClick={() => setShowAddClientModal(true)} className="bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2 px-4 rounded-lg flex items-center shadow-sm"><span className="mr-2">➕</span>添加新来访</button></div>
+                <input type="text" placeholder="搜索来访者姓名..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="w-full p-3 mb-4 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"/>
+                {filteredClients.length > 0 ? (
+                    <ul className="space-y-3">{filteredClients.map(client => (<li key={client.id} onClick={() => onSelectClient(client)} className="bg-gray-50 hover:bg-blue-50 border rounded-lg p-4 cursor-pointer flex justify-between items-center transition-all duration-200 hover:shadow-md"><div><p className="text-lg font-medium text-blue-700">{client.name} <span className="text-sm text-gray-500">({client.gender}, {client.age}岁)</span></p><p className="text-sm text-gray-600">加入日期: {client.joinDate}</p></div><span className="text-gray-400 font-bold">❯</span></li>))}</ul>
+                ) : <p className="text-center text-gray-500 py-8">暂无匹配的来访者。</p>}
+                {showAddClientModal && <AddClientModal onClose={() => setShowAddClientModal(false)} onAddClient={onAddClient} allClients={clients} />}
             </div>
         );
     };
@@ -242,25 +870,24 @@
       });
       const handleChange = (e) => { const { name, value } = e.target; setFormData(prev => ({ ...prev, [name]: value })); };
       const handleSubmit = (e) => {
-        e.preventDefault(); if (!formData.name.trim() || !formData.age) { console.warn('姓名和年龄为必填项。'); return; }
+        e.preventDefault(); if (!formData.name.trim() || !formData.age) { alert('姓名和年龄为必填项。'); return; }
         const clientData = { ...formData, age: parseInt(formData.age), referredBy: formData.referredBy || null };
-        const dataToSubmit = clientToEdit ? { ...clientToEdit, ...clientData } : clientData;
-        onAddClient(dataToSubmit, clientToEdit); onClose();
+        onAddClient(clientData, clientToEdit); onClose();
       };
       const potentialReferrers = allClients.filter(c => c.id !== clientToEdit?.id);
       return (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50 animate-fadeIn">
           <div className="bg-white p-6 rounded-lg shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto">
-            <div className="flex justify-between items-center mb-4 sticky top-0 bg-white py-2 z-10"><h3 className="text-xl font-semibold">{clientToEdit ? '编辑' : '添加'}来访者信息</h3><button onClick={onClose} className="text-gray-500">❌</button></div>
+            <div className="flex justify-between items-center mb-4 sticky top-0 bg-white py-2 z-10 border-b"><h3 className="text-xl font-semibold">{clientToEdit ? '编辑' : '添加'}来访者信息</h3><button onClick={onClose} className="text-gray-500 hover:text-red-500">❌</button></div>
             <form onSubmit={handleSubmit} className="space-y-4">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div><label className="block text-sm font-medium">姓名 <span className="text-red-500">*</span></label><input type="text" name="name" value={formData.name} onChange={handleChange} required className="w-full p-2 border rounded-md" /></div>
                 <div><label className="block text-sm font-medium">年龄 <span className="text-red-500">*</span></label><input type="number" name="age" value={formData.age} onChange={handleChange} required className="w-full p-2 border rounded-md" /></div>
                 <div><label className="block text-sm font-medium">性别</label><select name="gender" value={formData.gender} onChange={handleChange} className="w-full p-2 border rounded-md"><option>未透露</option><option>男</option><option>女</option><option>其他</option></select></div>
-                <div><label className="block text-sm font-medium">在读年级</label><input type="text" name="grade" value={formData.grade} onChange={handleChange} className="w-full p-2 border rounded-md" /></div>
+                <div><label className="block text-sm font-medium">在读年级/职业</label><input type="text" name="grade" value={formData.grade} onChange={handleChange} className="w-full p-2 border rounded-md" /></div>
                 <div><label className="block text-sm font-medium">性取向</label><input type="text" name="sexualOrientation" value={formData.sexualOrientation} onChange={handleChange} className="w-full p-2 border rounded-md" /></div>
                 <div><label className="block text-sm font-medium">联系方式</label><input type="text" name="contact" value={formData.contact} onChange={handleChange} className="w-full p-2 border rounded-md" /></div>
-                <div><label className="block text-sm font-medium">被...介绍</label><select name="referredBy" value={formData.referredBy || ''} onChange={handleChange} className="w-full p-2 border rounded-md"><option value="">无</option>{potentialReferrers.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</select></div>
+                <div><label className="block text-sm font-medium">转介绍来源</label><select name="referredBy" value={formData.referredBy || ''} onChange={handleChange} className="w-full p-2 border rounded-md"><option value="">无</option>{potentialReferrers.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</select></div>
                 <div><label className="block text-sm font-medium">心理状态评分(1-10)</label><select name="mentalStateScore" value={formData.mentalStateScore} onChange={handleChange} className="w-full p-2 border rounded-md">{[...Array(10).keys()].map(i => <option key={i+1} value={i+1}>{i+1}</option>)}</select></div>
                 <div className="md:col-span-2"><label className="block text-sm font-medium">既往病史</label><input type="text" name="historyOfIllness" value={formData.historyOfIllness} onChange={handleChange} className="w-full p-2 border rounded-md" /></div>
                 <div className="md:col-span-2"><label className="block text-sm font-medium">残障情况</label><input type="text" name="disabilityStatus" value={formData.disabilityStatus} onChange={handleChange} className="w-full p-2 border rounded-md" /></div>
@@ -269,97 +896,107 @@
                 <div><label className="block text-sm font-medium">个人经济</label><input type="text" name="personalFinance" value={formData.personalFinance} onChange={handleChange} className="w-full p-2 border rounded-md" /></div>
                 <div><label className="block text-sm font-medium">家庭经济</label><input type="text" name="familyFinance" value={formData.familyFinance} onChange={handleChange} className="w-full p-2 border rounded-md" /></div>
               </div>
-              <div className="flex justify-end space-x-3 pt-4"><button type="button" onClick={onClose} className="px-4 py-2 bg-gray-100 rounded-md border">取消</button><button type="submit" className="px-4 py-2 text-white bg-blue-600 rounded-md flex items-center"><span className="mr-2">💾</span>{clientToEdit ? '保存' : '添加'}</button></div>
+              <div className="flex justify-end space-x-3 pt-4"><button type="button" onClick={onClose} className="px-4 py-2 bg-gray-200 hover:bg-gray-300 rounded-md border">取消</button><button type="submit" className="px-4 py-2 text-white bg-blue-600 hover:bg-blue-700 rounded-md flex items-center shadow-sm"><span className="mr-2">💾</span>{clientToEdit ? '保存' : '添加'}</button></div>
             </form>
           </div>
         </div>
       );
     };
 
-    const ClientDetailView = ({ client, allClients, onUpdateClient, onDeleteClient, setGlobalLoadingMessage }) => {
+    const ClientDetailView = ({ client, allClients, onUpdateClient, onDeleteClient, globalLoadingMessage, setGlobalLoadingMessage, showAlert }) => {
       const { useState } = React;
       const [activeTab, setActiveTab] = useState('profile');
       const [showEditModal, setShowEditModal] = useState(false);
-      const [isAiLoading, setIsAiLoading] = useState(false);
-      const tabs = [{ id: 'profile', label: '档案与会话', icon: '👤' }, { id: 'conceptualization', label: 'AI个案概念化', icon: '📜' },{ id: 'supervision', label: 'AI督导', icon: '🔬' },{ id: 'analysis', label: '来访者评估', icon: '📊' }];
+      const tabs = [{ id: 'profile', label: '档案与会话', icon: '👤' }, { id: 'conceptualization', label: 'AI个案概念化', icon: '📜' },{ id: 'analysis', label: '来访者评估', icon: '📊' }, { id: 'supervision', label: 'AI督导', icon: '🔬' }];
       
-      const triggerAiGenerationIfNeeded = async (currentClient, sessionId) => {
-        const session = currentClient.sessions.find(s => s.id === sessionId);
-        if (session && session.transcript && session.conceptualization.status === 'Pending') {
-            setGlobalLoadingMessage(`正在为 ${currentClient.name} (会话: ${session.date}) 生成AI内容...`);
-            setIsAiLoading(true);
-            const sessionIndex = currentClient.sessions.findIndex(s => s.id === sessionId);
-            
-            let processingClient = JSON.parse(JSON.stringify(currentClient));
-            processingClient.sessions[sessionIndex].conceptualization.status = 'Processing';
-            processingClient.sessions[sessionIndex].assessment.status = 'Processing';
-            onUpdateClient(processingClient);
-
-            const formData = new FormData();
-            formData.append('transcript', session.transcript.file); // Assume file object is stored
-            formData.append('client_info', JSON.stringify(client));
-
-            try {
-                const response = await fetch('/api/upload-and-analyze', { method: 'POST', body: formData });
-                if (!response.ok) { const errData = await response.json(); throw new Error(errData.error || `服务器错误: ${response.status}`); }
-                const result = await response.json();
-                
-                let finalClient = JSON.parse(JSON.stringify(processingClient));
-                finalClient.sessions[sessionIndex].transcript = { ...finalClient.sessions[sessionIndex].transcript, name: result.uploadedFileName };
-                finalClient.sessions[sessionIndex].conceptualization = result.conceptualization;
-                finalClient.sessions[sessionIndex].assessment = result.assessment;
-                onUpdateClient(finalClient);
-
-            } catch (error) {
-                console.error('文件上传或分析失败:', error);
-                let errorClient = JSON.parse(JSON.stringify(processingClient));
-                errorClient.sessions[sessionIndex].conceptualization = {status: 'Error', content: error.message};
-                errorClient.sessions[sessionIndex].assessment = {status: 'Error', content: error.message};
-                onUpdateClient(errorClient);
-            } finally {
-                setGlobalLoadingMessage('');
-                setIsAiLoading(false);
-            }
-        }
+      const readFileAsText = (file) => {
+        return new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = event => resolve(event.target.result);
+            reader.onerror = error => reject(error);
+            reader.readAsText(file, 'UTF-8');
+        });
       };
       
+      const triggerAiGeneration = async (currentClient, sessionId, transcriptContent, transcriptName) => {
+          const sessionIndex = currentClient.sessions.findIndex(s => s.id === sessionId);
+          if (sessionIndex === -1) return;
+
+          setGlobalLoadingMessage(`正在为 ${currentClient.name} (会话: ${currentClient.sessions[sessionIndex].date}) 生成AI报告...`);
+          
+          let processingClient = JSON.parse(JSON.stringify(currentClient));
+          processingClient.sessions[sessionIndex].conceptualization.status = 'Processing';
+          processingClient.sessions[sessionIndex].assessment.status = 'Processing';
+          onUpdateClient(processingClient);
+
+          try {
+              const userPrompt = `来访者基本信息:\n${JSON.stringify(currentClient, null, 2)}\n\n咨询逐字稿内容:\n---\n${transcriptContent}\n---`;
+              
+              const [conceptualizationResult, assessmentResult] = await Promise.all([
+                  callGeminiApi(getConceptualizationPromptText(), userPrompt),
+                  callGeminiApi(getAssessmentPromptText(), userPrompt)
+              ]);
+
+              let finalClient = JSON.parse(JSON.stringify(processingClient));
+              finalClient.sessions[sessionIndex].transcript = { name: transcriptName, content: transcriptContent };
+              finalClient.sessions[sessionIndex].conceptualization = { status: 'Complete', content: conceptualizationResult };
+              finalClient.sessions[sessionIndex].assessment = { status: 'Complete', content: assessmentResult };
+              onUpdateClient(finalClient);
+              showAlert('AI报告已成功生成！');
+
+          } catch (error) {
+              console.error('AI generation failed:', error);
+              showAlert(`AI报告生成失败: ${error.message}`);
+              let errorClient = JSON.parse(JSON.stringify(processingClient));
+              errorClient.sessions[sessionIndex].conceptualization = { status: 'Error', content: error.message };
+              errorClient.sessions[sessionIndex].assessment = { status: 'Error', content: error.message };
+              onUpdateClient(errorClient);
+          } finally {
+              setGlobalLoadingMessage('');
+          }
+      };
+
       const handleAddSession = (newSessionData) => {
         const newSession = { id: `session-${client.id}-${Date.now()}`, ...newSessionData, transcript: null, conceptualization: { status: 'Pending' }, assessment: { status: 'Pending' }, supervision: { status: 'Pending', conceptualizationUploaded: null, assessmentUploaded: null, content: null } };
         onUpdateClient({ ...client, sessions: [...(client.sessions || []), newSession] });
       };
 
-      const handleFileUpload = (sessionId, file) => {
-        const sessionIndex = client.sessions.findIndex(s => s.id === sessionId);
-        if (sessionIndex === -1) return;
-        const updatedClient = JSON.parse(JSON.stringify(client));
-        updatedClient.sessions[sessionIndex].transcript = { name: file.name, file: file }; // Store the file object temporarily
-        onUpdateClient(updatedClient, (finalUpdatedClient) => {
-            triggerAiGenerationIfNeeded(finalUpdatedClient, sessionId);
-        });
+      const handleFileUpload = async (sessionId, file) => {
+        try {
+            const content = await readFileAsText(file);
+            const sessionIndex = client.sessions.findIndex(s => s.id === sessionId);
+            if (sessionIndex === -1) return;
+            let updatedClient = JSON.parse(JSON.stringify(client));
+            updatedClient.sessions[sessionIndex].transcript = { name: file.name, content: content };
+            onUpdateClient(updatedClient, (finalUpdatedClient) => {
+                triggerAiGeneration(finalUpdatedClient, sessionId, content, file.name);
+            });
+        } catch(e) {
+            showAlert(`读取文件失败: ${e.message}`);
+        }
       };
-      
-      const handleSupervisionFileUploaded = async (sessionId, fileType, file) => {
-          const sessionIndex = client.sessions.findIndex(s => s.id === sessionId);
-          if (sessionIndex === -1) return;
 
-          const reader = new FileReader();
-          reader.onload = (e) => {
-              const fileContent = e.target.result;
+      const handleSupervisionFileUploaded = async (sessionId, fileType, file) => {
+          try {
+              const fileContent = await readFileAsText(file);
+              const sessionIndex = client.sessions.findIndex(s => s.id === sessionId);
+              if (sessionIndex === -1) return;
+
               let updatedClient = JSON.parse(JSON.stringify(client));
               updatedClient.sessions[sessionIndex].supervision[fileType + 'Uploaded'] = { name: file.name, content: fileContent };
               onUpdateClient(updatedClient, (finalUpdatedClient) => {
                   const finalSession = finalUpdatedClient.sessions.find(s => s.id === sessionId);
-                  if(finalSession.supervision.conceptualizationUploaded && finalSession.supervision.assessmentUploaded && finalSession.supervision.status !== 'Complete' && finalSession.supervision.status !== 'Processing') {
+                  if (finalSession.supervision.conceptualizationUploaded && finalSession.supervision.assessmentUploaded && finalSession.supervision.status !== 'Complete' && finalSession.supervision.status !== 'Processing') {
                       triggerSupervisionGeneration(finalUpdatedClient, sessionId);
                   }
               });
-          };
-          reader.readAsText(file, 'UTF-8');
+          } catch (e) {
+              showAlert(`读取督导文件失败: ${e.message}`);
+          }
       };
       
       const triggerSupervisionGeneration = async (clientForSupervision, sessionId) => {
           setGlobalLoadingMessage(`正在为 ${clientForSupervision.name} 生成最终督导报告...`);
-          setIsAiLoading(true);
           const sessionIndex = clientForSupervision.sessions.findIndex(s => s.id === sessionId);
           
           let processingClient = JSON.parse(JSON.stringify(clientForSupervision));
@@ -368,56 +1005,49 @@
 
           try {
               const currentSession = processingClient.sessions[sessionIndex];
-              const response = await fetch('/api/generate-supervision', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    client_info: clientForSupervision,
-                    transcript_content: currentSession.transcript.content, // This might need to be re-read if not stored
-                    conceptualization_content: currentSession.supervision.conceptualizationUploaded.content,
-                    assessment_content: currentSession.supervision.assessmentUploaded.content
-                })
-              });
-              if (!response.ok) { const errData = await response.json(); throw new Error(errData.error || `服务器错误: ${response.status}`); }
-              const result = await response.json();
+              const promptForSupervision = `来访者基本信息:\n${JSON.stringify(clientForSupervision, null, 2)}\n\n咨询逐字稿内容:\n${currentSession.transcript.content}\n\nAI生成的个案概念化:\n${currentSession.supervision.conceptualizationUploaded.content}\n\nAI生成的来访者评估:\n${currentSession.supervision.assessmentUploaded.content}`;
+              
+              const supervisionContent = await callGeminiApi(getSupervisionPromptText(), promptForSupervision);
               
               let finalClient = JSON.parse(JSON.stringify(processingClient));
               finalClient.sessions[sessionIndex].supervision = { 
                   ...finalClient.sessions[sessionIndex].supervision,
                   status: 'Complete', 
-                  content: result.supervision.content 
+                  content: supervisionContent 
               };
               onUpdateClient(finalClient);
+              showAlert('AI督导报告已成功生成！');
           } catch(error) {
+              showAlert(`AI督导报告生成失败: ${error.message}`);
               let errorClient = JSON.parse(JSON.stringify(processingClient));
               errorClient.sessions[sessionIndex].supervision = { ...errorClient.sessions[sessionIndex].supervision, status: 'Error', content: error.message };
               onUpdateClient(errorClient);
           } finally {
               setGlobalLoadingMessage('');
-              setIsAiLoading(false);
           }
       };
-
+      
       const renderTabContent = () => {
+        const isLoading = !!globalLoadingMessage;
         switch (activeTab) {
-          case 'profile': return <ClientProfileTab client={client} allClients={allClients} onAddSession={handleAddSession} onFileUpload={handleFileUpload} isAiLoading={isAiLoading} />;
-          case 'conceptualization': return <ConceptualizationTab client={client} />;
-          case 'supervision': return <SupervisionReportTab client={client} onSupervisionFileUploaded={handleSupervisionFileUploaded} isAiLoading={isAiLoading} />;
-          case 'analysis': return <AnalysisReportTab client={client} />;
+          case 'profile': return <ClientProfileTab client={client} allClients={allClients} onAddSession={handleAddSession} onFileUpload={handleFileUpload} isAiLoading={isLoading} />;
+          case 'conceptualization': return <ReportDisplayTab client={client} reportType="conceptualization" title="AI个案概念化" themeColor="indigo" />;
+          case 'analysis': return <ReportDisplayTab client={client} reportType="assessment" title="来访者评估" themeColor="green" />;
+          case 'supervision': return <SupervisionReportTab client={client} onSupervisionFileUploaded={handleSupervisionFileUploaded} isAiLoading={isLoading} />;
           default: return null;
         }
       };
 
       return (
-        <div className="bg-white p-6 rounded-xl shadow-xl animate-fadeIn">
-          <div className="flex flex-col md:flex-row justify-between md:items-center mb-4 pb-4 border-b gap-4"><h2 className="text-2xl font-semibold text-gray-700 flex items-center"><span className="mr-3 text-3xl">👤</span>{client.name} - 档案中心</h2><div><button onClick={() => setShowEditModal(true)} className="text-sm text-blue-600 mr-4 flex items-center"><span className="mr-1">✏️</span>编辑</button><button onClick={() => onDeleteClient(client.id)} className="text-sm text-red-500 flex items-center"><span className="mr-1">🗑️</span>删除</button></div></div>
-          <div className="border-b border-gray-200"><nav className="-mb-px flex space-x-6 overflow-x-auto">{tabs.map(tab => <button key={tab.id} onClick={() => setActiveTab(tab.id)} className={`flex-shrink-0 whitespace-nowrap py-3 px-1 border-b-2 font-medium text-sm flex items-center ${activeTab === tab.id ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}><span className="mr-2">{tab.icon}</span>{tab.label}</button>)}</nav></div>
+        <div className="bg-white p-6 rounded-lg shadow-md animate-fadeIn">
+          <div className="flex flex-col md:flex-row justify-between md:items-center mb-4 pb-4 border-b gap-4"><h2 className="text-2xl font-semibold text-gray-700 flex items-center"><span className="mr-3 text-3xl">👤</span>{client.name} - 档案中心</h2><div><button onClick={() => setShowEditModal(true)} className="text-sm font-medium text-blue-600 hover:text-blue-800 mr-4 flex items-center"><span className="mr-1">✏️</span>编辑</button><button onClick={() => onDeleteClient(client.id)} className="text-sm font-medium text-red-600 hover:text-red-800 flex items-center"><span className="mr-1">🗑️</span>删除</button></div></div>
+          <div className="border-b border-gray-200"><nav className="-mb-px flex space-x-6 overflow-x-auto">{tabs.map(tab => <button key={tab.id} onClick={() => setActiveTab(tab.id)} className={`flex-shrink-0 whitespace-nowrap py-3 px-1 border-b-2 font-medium text-sm flex items-center ${activeTab === tab.id ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'}`}><span className="mr-2">{tab.icon}</span>{tab.label}</button>)}</nav></div>
           <div className="pt-6">{renderTabContent()}</div>
           {showEditModal && <AddClientModal onClose={() => setShowEditModal(false)} onAddClient={onUpdateClient} clientToEdit={client} allClients={allClients}/>}
         </div>
       );
     };
-    
+
     const ClientProfileTab = ({ client, allClients, onAddSession, onFileUpload, isAiLoading }) => {
       const { useState, useRef } = React;
       const [showAddSession, setShowAddSession] = useState(false);
@@ -426,27 +1056,29 @@
       
       const SessionCard = ({ session }) => {
         const fileInputRef = useRef(null);
-        const status = session.conceptualization?.status === 'Processing' || session.assessment?.status === 'Processing' ? 'Processing' : 
-                       (session.conceptualization?.status === 'Complete' && session.assessment?.status === 'Complete') ? 'Complete' : 'Pending';
-        
+        const status = session.conceptualization?.status;
+        const colorMap = { Pending: 'yellow', Processing: 'blue', Complete: 'green', Error: 'red' };
+        const statusColor = colorMap[status] || 'gray';
+
         const handleFileSelect = (event) => {
             const file = event.target.files[0];
             if (file) onFileUpload(session.id, file);
         };
-
         return (
-            <div className={`p-4 bg-white rounded-lg border border-gray-300 shadow-sm ${status === 'Processing' && 'animate-pulse'}`}>
-                <p className="font-semibold text-gray-800">咨询日期: {session.date}</p>
+            <div className={`p-4 bg-white rounded-lg border border-gray-200 shadow-sm transition-all ${status === 'Processing' && 'animate-pulse'}`}>
+                <div className="flex justify-between items-start">
+                    <p className="font-semibold text-gray-800">咨询日期: {session.date}</p>
+                    {session.transcript && <div className={`text-xs font-medium px-2 py-0.5 rounded-full bg-${statusColor}-100 text-${statusColor}-800`}>报告状态: {status}</div>}
+                </div>
                 <div className="mt-3 p-3 bg-gray-50 rounded-md text-center">
                     <p className="text-sm font-medium text-gray-600">咨询逐字稿</p>
-                    {session.transcript ? (<div className="text-green-600 mt-1"><span className="text-xl">✅</span><p className="text-xs break-all">{session.transcript.name}</p></div>) : (
+                    {session.transcript ? (<div className="text-green-600 mt-1 flex items-center justify-center gap-2"><span className="text-xl">✅</span><p className="text-xs break-all font-mono">{session.transcript.name}</p></div>) : (
                         <>
                             <input type="file" ref={fileInputRef} onChange={handleFileSelect} className="hidden" accept=".txt,.md,.docx"/>
-                            <button onClick={() => fileInputRef.current.click()} disabled={isAiLoading} className="mt-1 text-xs bg-indigo-500 text-white py-1 px-2 rounded disabled:opacity-50">上传并生成AI内容</button>
+                            <button onClick={() => fileInputRef.current.click()} disabled={isAiLoading} className="mt-1 text-xs bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-1 px-3 rounded shadow-sm disabled:opacity-50 disabled:cursor-not-allowed">上传并生成AI报告</button>
                         </>
                     )}
                 </div>
-                {session.transcript && <div className="mt-3 text-center text-xs text-gray-500">✨ 初步报告状态: <span className={status === 'Complete' ? 'text-green-600' : 'text-yellow-600'}>{status}</span></div>}
             </div>
         );
       }
@@ -458,8 +1090,8 @@
                 <h3 className="text-lg font-semibold text-gray-700 mb-3 flex items-center"><span className="mr-2">ℹ️</span>基本信息</h3>
                 <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-x-6 gap-y-4 text-sm">
                     <p><strong>姓名:</strong> {client.name}</p><p><strong>年龄:</strong> {client.age} 岁</p><p><strong>性别:</strong> {client.gender}</p>
-                    <p><strong>在读年级:</strong> {client.grade || '未提供'}</p><p><strong>性取向:</strong> {client.sexualOrientation || '未提供'}</p><p><strong>联系方式:</strong> {client.contact || '未提供'}</p>
-                    <p><strong>被...介绍:</strong> {referrer ? referrer.name : '无'}</p><p><strong>介绍...:</strong> {referredList?.length > 0 ? referredList.map(c => c.name).join(', ') : '无'}</p><p><strong>心理状态评分:</strong> {client.mentalStateScore}/10</p>
+                    <p><strong>职业/年级:</strong> {client.grade || '未提供'}</p><p><strong>性取向:</strong> {client.sexualOrientation || '未提供'}</p><p><strong>联系方式:</strong> {client.contact || '未提供'}</p>
+                    <p><strong>转介绍来源:</strong> {referrer ? referrer.name : '无'}</p><p><strong>已转介绍:</strong> {referredList?.length > 0 ? referredList.map(c => c.name).join(', ') : '无'}</p><p><strong>心理状态评分:</strong> {client.mentalStateScore}/10</p>
                     <p className="md:col-span-3"><strong>既往病史:</strong> {client.historyOfIllness || '未提供'}</p>
                     <p className="md:col-span-3"><strong>残障情况:</strong> {client.disabilityStatus || '未提供'}</p>
                     <p><strong>宗教信仰:</strong> {client.religiousBelief || '未提供'}</p><p><strong>种族认同:</strong> {client.ethnicIdentity || '未提供'}</p>
@@ -467,31 +1099,44 @@
                 </div>
             </div>
             <div>
-                <div className="flex justify-between items-center mb-3"><h3 className="text-lg font-semibold text-gray-700 flex items-center"><span className="mr-2">📅</span>咨询会话工作流</h3><button onClick={() => setShowAddSession(true)} className="text-sm bg-blue-600 text-white py-1 px-3 rounded-md">添加新会话</button></div>
-                {showAddSession && (<div className="p-4 mb-4 bg-blue-50 border rounded-lg flex items-center gap-4"><input type="date" value={newSessionDate} onChange={e => setNewSessionDate(e.target.value)} className="p-2 border rounded-md"/><button onClick={handleCreateSession} className="bg-blue-500 text-white py-2 px-4 rounded-md">创建</button><button onClick={() => setShowAddSession(false)} className="text-gray-600">取消</button></div>)}
+                <div className="flex justify-between items-center mb-3"><h3 className="text-lg font-semibold text-gray-700 flex items-center"><span className="mr-2">📅</span>咨询会话工作流</h3><button onClick={() => setShowAddSession(true)} className="text-sm bg-blue-600 hover:bg-blue-700 text-white font-semibold py-1 px-3 rounded-md shadow-sm">添加新会话</button></div>
+                {showAddSession && (<div className="p-4 mb-4 bg-blue-50 border rounded-lg flex items-center gap-4 animate-fadeIn"><input type="date" value={newSessionDate} onChange={e => setNewSessionDate(e.target.value)} className="p-2 border rounded-md"/><button onClick={handleCreateSession} className="bg-blue-500 hover:bg-blue-600 text-white py-2 px-4 rounded-md shadow-sm">创建</button><button onClick={() => setShowAddSession(false)} className="text-gray-600">取消</button></div>)}
                 <div className="space-y-4">{client.sessions?.length > 0 ? [...client.sessions].reverse().map(session => <SessionCard key={session.id} session={session} />) : <p className="text-center text-gray-500 py-4">暂无咨询会话记录。</p>}</div>
             </div>
         </div>
       );
     };
-    
-    const ConceptualizationTab = ({ client }) => {
+
+    const ReportDisplayTab = ({ client, reportType, title, themeColor }) => {
         const { useState, useEffect } = React;
-        const aiSessions = (client.sessions || []).filter(s => s.conceptualization && s.conceptualization.status !== 'Pending');
-        const [selectedSession, setSelectedSession] = useState(aiSessions.length > 0 ? aiSessions[0] : null);
-        useEffect(() => { const sessions = (client.sessions || []).filter(s => s.conceptualization?.status !== 'Pending'); setSelectedSession(sessions.length > 0 ? sessions[0] : null); }, [client]);
+        const aiSessions = (client.sessions || []).filter(s => s[reportType] && s[reportType].status !== 'Pending');
+        const [selectedSession, setSelectedSession] = useState(aiSessions.length > 0 ? aiSessions.reverse()[0] : null);
+        
+        useEffect(() => {
+            const sessions = (client.sessions || []).filter(s => s[reportType]?.status !== 'Pending');
+            if (sessions.length > 0 && !sessions.some(s => s.id === selectedSession?.id)) {
+                setSelectedSession(sessions.reverse()[0]);
+            } else if (sessions.length === 0) {
+                setSelectedSession(null);
+            }
+        }, [client, reportType, selectedSession]);
+
+        const report = selectedSession ? selectedSession[reportType] : null;
+
         return (
              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                <div className="md:col-span-1 bg-gray-50 p-4 rounded-lg border"><h3 className="text-lg font-medium text-gray-700 mb-3">历史记录</h3><ul className="space-y-2 max-h-[60vh] overflow-y-auto pr-2">{aiSessions.length === 0 ? <p className="text-sm text-gray-500 text-center py-4">暂无记录。</p> : [...aiSessions].reverse().map(session => <li key={session.id} onClick={() => setSelectedSession(session)} className={`p-3 rounded-lg cursor-pointer border-2 ${selectedSession?.id === session.id ? 'bg-indigo-100 border-indigo-500' : 'bg-white hover:bg-gray-100 border-transparent'}`}><p className="font-semibold text-indigo-600">咨询日期: {session.date}</p><p className={`text-xs font-medium mt-1 ${session.conceptualization.status === 'Complete' ? 'text-green-600' : 'text-red-600'}`}>状态: {session.conceptualization.status}</p></li>)}</ul></div>
-                <div className="md:col-span-2"><h3 className="text-lg font-medium mb-3 text-gray-700">个案概念化详情</h3>{selectedSession ? <div className="p-4 bg-white border rounded-lg h-full"><div className="flex justify-between items-center mb-2"><h4 className="font-bold text-lg text-indigo-700">关于 {selectedSession.date} 咨询的AI个案概念化</h4><button onClick={()=>downloadTextAsFile(selectedSession.conceptualization.content, `${client.name}_${selectedSession.date}_个案概念化.txt`)} className="text-xs bg-gray-600 text-white py-1 px-2 rounded">下载</button></div><div className="whitespace-pre-wrap text-gray-800 bg-gray-50 p-3 mt-3 rounded-md overflow-y-auto max-h-[55vh]">{selectedSession.conceptualization.content}</div></div> : <p className="text-gray-500 text-center pt-10">请从左侧选择记录查看。</p>}</div>
+                <div className="md:col-span-1 bg-gray-50 p-4 rounded-lg border"><h3 className="text-lg font-medium text-gray-700 mb-3">历史记录</h3><ul className="space-y-2 max-h-[60vh] overflow-y-auto pr-2">{aiSessions.length === 0 ? <p className="text-sm text-gray-500 text-center py-4">暂无记录。</p> : [...aiSessions].reverse().map(session => <li key={session.id} onClick={() => setSelectedSession(session)} className={`p-3 rounded-lg cursor-pointer border-2 ${selectedSession?.id === session.id ? `bg-${themeColor}-100 border-${themeColor}-500` : `bg-white hover:bg-gray-100 border-transparent`}`}><p className={`font-semibold text-${themeColor}-600`}>咨询日期: {session.date}</p><p className={`text-xs font-medium mt-1 text-${session[reportType].status === 'Complete' ? 'green-600' : 'red-600'}`}>状态: {session[reportType].status}</p></li>)}</ul></div>
+                <div className="md:col-span-2"><h3 className="text-lg font-medium mb-3 text-gray-700">{title}详情</h3>{report ? <div className="p-4 bg-white border rounded-lg h-full"><div className="flex justify-between items-center mb-2"><h4 className={`font-bold text-lg text-${themeColor}-700`}>关于 {selectedSession.date} 咨询的{title}</h4><button onClick={()=>downloadTextAsFile(report.content, `${client.name}_${selectedSession.date}_${reportType}.txt`)} className="text-xs bg-gray-600 text-white py-1 px-2 rounded hover:bg-gray-700">下载</button></div><div className="whitespace-pre-wrap text-gray-800 bg-gray-50 p-3 mt-3 rounded-md overflow-y-auto max-h-[55vh]">{report.content}</div></div> : <p className="text-gray-500 text-center pt-10">请从左侧选择记录查看。</p>}</div>
             </div>
         );
     }
-    const SupervisionReportTab = ({ client, onSupervisionFileUploaded }) => {
+
+    const SupervisionReportTab = ({ client, onSupervisionFileUploaded, isAiLoading }) => {
         const { useState, useEffect, useRef } = React;
-        const aiSessions = (client.sessions || []).filter(s => s.transcript);
-        const [selectedSession, setSelectedSession] = useState(aiSessions.length > 0 ? aiSessions[0] : null);
-        useEffect(() => { const sessions = (client.sessions || []).filter(s => s.transcript); setSelectedSession(sessions.length > 0 ? sessions[0] : null); }, [client]);
+        const eligibleSessions = (client.sessions || []).filter(s => s.transcript);
+        const [selectedSession, setSelectedSession] = useState(eligibleSessions.length > 0 ? eligibleSessions[0] : null);
+        useEffect(() => { const sessions = (client.sessions || []).filter(s => s.transcript); setSelectedSession(sessions.length > 0 ? sessions.reverse()[0] : null); }, [client]);
+        
         const SupervisionWorkflow = ({ session }) => {
             const conceptualizationInputRef = useRef(null);
             const assessmentInputRef = useRef(null);
@@ -499,73 +1144,47 @@
                 const file = event.target.files[0];
                 if(file) onSupervisionFileUploaded(session.id, fileType, file);
             }
+            const isReadyForGeneration = session.supervision.conceptualizationUploaded && session.supervision.assessmentUploaded;
+
             return (
                 <div className="p-4 bg-white border rounded-lg h-full space-y-4">
                     <div className="p-3 bg-gray-50 rounded-md">
-                        <h4 className="text-md font-medium text-gray-700 mb-2">第1步: 上传AI生成的报告</h4>
-                        <div className="grid grid-cols-2 gap-4">
-                            <div><p className="text-sm text-center mb-1">个案概念化</p><button onClick={() => conceptualizationInputRef.current.click()} disabled={session.supervision.conceptualizationUploaded || session.conceptualization?.status !== 'Complete'} className="w-full text-xs bg-indigo-500 text-white py-1 px-2 rounded disabled:bg-gray-400">{session.supervision.conceptualizationUploaded ? `✅ 已上传` : '上传'}</button><input type="file" ref={conceptualizationInputRef} onChange={(e) => handleFileSelect(e, 'conceptualization')} className="hidden" accept=".txt"/></div>
-                            <div><p className="text-sm text-center mb-1">来访者评估</p><button onClick={() => assessmentInputRef.current.click()} disabled={session.supervision.assessmentUploaded || session.assessment?.status !== 'Complete'} className="w-full text-xs bg-indigo-500 text-white py-1 px-2 rounded disabled:bg-gray-400">{session.supervision.assessmentUploaded ? `✅ 已上传` : '上传'}</button><input type="file" ref={assessmentInputRef} onChange={(e) => handleFileSelect(e, 'assessment')} className="hidden" accept=".txt"/></div>
+                        <h4 className="text-md font-medium text-gray-700 mb-2">第1步: 上传已生成的报告（用于督导）</h4>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div><p className="text-sm text-center mb-1">个案概念化报告</p><button onClick={() => conceptualizationInputRef.current.click()} disabled={session.supervision.conceptualizationUploaded || session.conceptualization?.status !== 'Complete'} className="w-full text-xs bg-indigo-500 text-white py-1 px-2 rounded disabled:bg-gray-400 disabled:cursor-not-allowed">{session.supervision.conceptualizationUploaded ? `✅ 已上传` : '上传 .txt 文件'}</button><input type="file" ref={conceptualizationInputRef} onChange={(e) => handleFileSelect(e, 'conceptualization')} className="hidden" accept=".txt"/></div>
+                            <div><p className="text-sm text-center mb-1">来访者评估报告</p><button onClick={() => assessmentInputRef.current.click()} disabled={session.supervision.assessmentUploaded || session.assessment?.status !== 'Complete'} className="w-full text-xs bg-indigo-500 text-white py-1 px-2 rounded disabled:bg-gray-400 disabled:cursor-not-allowed">{session.supervision.assessmentUploaded ? `✅ 已上传` : '上传 .txt 文件'}</button><input type="file" ref={assessmentInputRef} onChange={(e) => handleFileSelect(e, 'assessment')} className="hidden" accept=".txt"/></div>
                         </div>
-                        <p className="text-xs text-gray-500 mt-2">请先确保概念化和评估报告已生成。上传后将自动触发最终督导报告生成。</p>
+                        <p className="text-xs text-gray-500 mt-2">提示：请先确保初步报告已生成(状态为Complete)。上传两份报告后将自动触发最终督导报告生成。</p>
                     </div>
                     <div className="p-3 bg-gray-50 rounded-md">
                         <h4 className="text-md font-medium text-gray-700 mb-2">第2步: 查看最终督导报告</h4>
-                        {session.supervision.status === 'Complete' ? <button onClick={()=>downloadTextAsFile(session.supervision.content, `${client.name}_${selectedSession.date}_督导报告.txt`)} className="text-sm bg-green-500 text-white py-2 px-4 rounded">下载督导报告</button> : <p className="text-sm text-gray-500">状态: {session.supervision.status}</p>}
+                        {session.supervision.status === 'Processing' && <p className="text-sm text-blue-600 animate-pulse">正在生成中...</p>}
+                        {session.supervision.status === 'Complete' ? <button onClick={()=>downloadTextAsFile(session.supervision.content, `${client.name}_${selectedSession.date}_督导报告.txt`)} className="text-sm bg-green-600 hover:bg-green-700 text-white font-semibold py-2 px-4 rounded shadow-sm">下载督导报告</button> : <p className="text-sm text-gray-500">状态: {session.supervision.status === 'Pending' ? '待上传文件' : session.supervision.status}</p>}
+                        {session.supervision.status === 'Error' && <p className="text-sm text-red-600">{session.supervision.content}</p>}
                     </div>
                 </div>
             );
         };
         return (
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                <div className="md:col-span-1 bg-gray-50 p-4 rounded-lg border"><h3 className="text-lg font-medium text-gray-700 mb-3">会话列表</h3><ul className="space-y-2 max-h-[60vh] overflow-y-auto pr-2">{aiSessions.length === 0 ? <p className="text-sm text-gray-500 text-center py-4">暂无会话。</p> : [...aiSessions].reverse().map(session => <li key={session.id} onClick={() => setSelectedSession(session)} className={`p-3 rounded-lg cursor-pointer border-2 ${selectedSession?.id === session.id ? 'bg-blue-100 border-blue-500' : 'bg-white hover:bg-gray-100 border-transparent'}`}><p className="font-semibold text-blue-600">咨询日期: {session.date}</p><p className={`text-xs font-medium mt-1 ${session.supervision.status === 'Complete' ? 'text-green-600' : 'text-yellow-600'}`}>{session.supervision.status}</p></li>)}</ul></div>
+                <div className="md:col-span-1 bg-gray-50 p-4 rounded-lg border"><h3 className="text-lg font-medium text-gray-700 mb-3">会话列表</h3><ul className="space-y-2 max-h-[60vh] overflow-y-auto pr-2">{eligibleSessions.length === 0 ? <p className="text-sm text-gray-500 text-center py-4">暂无符合条件的会话。</p> : [...eligibleSessions].reverse().map(session => <li key={session.id} onClick={() => setSelectedSession(session)} className={`p-3 rounded-lg cursor-pointer border-2 ${selectedSession?.id === session.id ? 'bg-blue-100 border-blue-500' : 'bg-white hover:bg-gray-100 border-transparent'}`}><p className="font-semibold text-blue-600">咨询日期: {session.date}</p><p className={`text-xs font-medium mt-1 ${session.supervision.status === 'Complete' ? 'text-green-600' : 'text-yellow-600'}`}>督导状态: {session.supervision.status}</p></li>)}</ul></div>
                 <div className="md:col-span-2"><h3 className="text-lg font-medium mb-3 text-gray-700">AI督导工作流</h3>{selectedSession ? <SupervisionWorkflow session={selectedSession}/> : <p className="text-gray-500 text-center pt-10">请从左侧选择一个会话以开始督导流程。</p>}</div>
             </div>
         );
     };
 
-    const AnalysisReportTab = ({ client }) => {
-        const { useState, useEffect } = React;
-        const aiReports = (client.sessions || []).filter(s => s.assessment && s.assessment.status !== 'Pending');
-        const [selectedReportSession, setSelectedReportSession] = useState(aiReports.length > 0 ? aiReports[0] : null);
-        useEffect(() => { const reports = (client.sessions || []).filter(s => s.assessment && s.assessment.status !== 'Pending'); setSelectedReportSession(reports.length > 0 ? reports[0] : null); }, [client]);
-        return (
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                <div className="md:col-span-1 bg-gray-50 p-4 rounded-lg border"><h3 className="text-lg font-medium text-gray-700 mb-3">历史评估</h3><ul className="space-y-2 max-h-[60vh] overflow-y-auto pr-2">{aiReports.length === 0 ? <p className="text-sm text-gray-500 text-center py-4">暂无AI评估报告。</p> : [...aiReports].reverse().map(session => <li key={session.id} onClick={() => setSelectedReportSession(session)} className={`p-3 rounded-lg cursor-pointer border-2 ${selectedReportSession?.id === session.id ? 'bg-green-100 border-green-500' : 'bg-white hover:bg-gray-100 border-transparent'}`}><p className="font-semibold text-green-600">咨询日期: {session.date}</p><p className={`text-xs font-medium mt-1 ${session.assessment.status === 'Complete' ? 'text-green-600' : 'text-red-600'}`}>状态: {session.assessment.status}</p></li>)}</ul></div>
-                <div className="md:col-span-2"><h3 className="text-lg font-medium mb-3 text-gray-700">评估详情</h3>{selectedReportSession ? <div className="p-4 bg-white border rounded-lg h-full"><div className="flex justify-between items-center mb-2"><h4 className="font-bold text-lg text-green-700">关于 {selectedReportSession.date} 咨询的评估报告</h4><button onClick={()=>downloadTextAsFile(selectedReportSession.assessment.content, `${client.name}_${selectedReportSession.date}_评估报告.txt`)} className="text-xs bg-gray-600 text-white py-1 px-2 rounded">下载</button></div><div className="whitespace-pre-wrap text-gray-800 bg-gray-50 p-3 mt-3 rounded-md overflow-y-auto max-h-[55vh]">{selectedReportSession.assessment.content}</div></div> : <p className="text-gray-500 text-center pt-10">请选择报告查看。</p>}</div>
-            </div>
-        );
-    };
-
-    const CBTSection = ({...props}) => {
-      const { useState } = React;
-      const [userInput, setUserInput] = useState('');
-      const [modelResponse, setModelResponse] = useState('');
-      const [isLoading, setIsLoading] = useState(false);
-      const [error, setError] = useState(null);
-      const [activeModel, setActiveModel] = useState(null);
-      const handleCBTInteraction = async (model) => {
-          if (!userInput.trim()) { console.warn('请输入。'); return; }
-          setIsLoading(true); setActiveModel(model); setError(null); setModelResponse(''); 
-          const systemPrompt = "你是一位专业的CBT心理咨询师。你的任务是以共情、支持和引导的方式与用户对话。帮助用户识别、挑战和重构他们的自动化负性思维。使用苏格拉底式提问，并提供关于CBT概念的心理教育。你必须使用中文进行回复。";
-          await callApi({ systemPrompt, userPrompt: userInput, model, onChunk: (chunk) => setModelResponse(prev => prev + chunk), onError: (err) => setError(`抱歉，与AI模型通信失败: ${err}`) });
-          setIsLoading(false); setActiveModel(null);
-      };
-      const LoadingSpinner = () => <svg className="animate-spin mr-2 h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>;
+    const CBTSection = ({ showAlert }) => {
       return (
-          <div className="bg-white p-6 rounded-xl shadow-xl animate-fadeIn max-w-4xl mx-auto">
-          <h2 className="text-2xl font-semibold mb-6 text-gray-700 border-b pb-3 flex items-center"><span className="text-2xl mr-3">🧠</span>咨询流程辅助工具 (待开发)</h2>
-          <div className="mb-4"><label htmlFor="cbtInput" className="block text-md font-medium text-gray-700 mb-2">请输入一个自动化思维、困扰情境或想要探讨的问题：</label><textarea id="cbtInput" value={userInput} onChange={(e) => setUserInput(e.target.value)} rows="5" placeholder="此功能模块正在开发中..." className="w-full p-3 border rounded-lg bg-gray-100 cursor-not-allowed" disabled/></div>
-          <div className="flex items-center space-x-4">
-              <button disabled className="bg-blue-600 text-white font-semibold py-2.5 px-6 rounded-lg shadow-md flex items-center justify-center opacity-50 cursor-not-allowed"><span className="mr-2">⚡️</span>获取快速CBT反馈</button>
-              <button disabled className="bg-purple-600 text-white font-semibold py-2.5 px-6 rounded-lg shadow-md flex items-center justify-center opacity-50 cursor-not-allowed"><span className="mr-2">✨</span>获取深度CBT反馈</button>
-          </div>
+          <div className="bg-white p-6 rounded-lg shadow-md animate-fadeIn max-w-4xl mx-auto">
+              <h2 className="text-2xl font-semibold mb-6 text-gray-700 border-b pb-3 flex items-center"><span className="text-2xl mr-3">🧠</span>辅助工具</h2>
+              <div className="text-center p-8 bg-gray-50 rounded-lg">
+                  <h3 className="text-xl font-bold text-gray-600">功能开发中</h3>
+                  <p className="mt-2 text-gray-500">此模块（如CBT练习工具）正在积极开发中，敬请期待未来的更新！</p>
+              </div>
           </div>
       );
     };
 
-    const InfoCard = ({ title, value, icon }) => ( <div className="bg-white p-4 rounded-lg shadow-md border flex items-center">{icon && <div className="mr-3 text-2xl">{icon}</div>}<div><p className="text-sm text-gray-500">{title}</p><p className="text-xl font-semibold text-gray-800">{value}</p></div></div> );
-    
     // Mount the app
     const root = ReactDOM.createRoot(document.getElementById('root'));
     root.render(<App />);
