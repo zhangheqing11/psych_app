@@ -1,5 +1,6 @@
-# 安装必要的库: pip install Flask requests gunicorn
-from flask import Flask, request, jsonify, send_from_directory, make_response
+# 安装必要的库: pip install Flask requests gunicorn Flask-Cors
+from flask import Flask, request, jsonify, send_from_directory
+from flask_cors import CORS
 import requests
 import os
 import json
@@ -8,14 +9,49 @@ import logging
 
 # 初始化Flask应用
 app = Flask(__name__, static_folder='static')
+CORS(app)  # 允许跨域请求
 app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024 # 16MB file size limit
 
 # 配置日志记录
 logging.basicConfig(level=logging.INFO)
 
+# --- 数据文件路径 ---
+DATA_FILE = 'database.json'
+
 # --- API 密钥配置 ---
 DEEPSEEK_API_KEY = "sk-44e1314da2d94b35b978f0fcd01ed26f"
 DEEPSEEK_API_URL = "https://api.deepseek.com/chat/completions"
+
+# --- 辅助函数：读写数据文件 ---
+def read_data():
+    """从JSON文件读取数据"""
+    if not os.path.exists(DATA_FILE):
+        return {
+            "users": {},
+            "clients": [],
+            "counselors": [],
+            "appointments": []
+        }
+    try:
+        with open(DATA_FILE, 'r', encoding='utf-8') as f:
+            # 如果文件为空，返回默认结构
+            content = f.read()
+            if not content:
+                return { "users": {}, "clients": [], "counselors": [], "appointments": [] }
+            return json.loads(content)
+    except (json.JSONDecodeError, FileNotFoundError):
+        return {
+            "users": {},
+            "clients": [],
+            "counselors": [],
+            "appointments": []
+        }
+
+def write_data(data):
+    """将数据写入JSON文件"""
+    with open(DATA_FILE, 'w', encoding='utf-8') as f:
+        json.dump(data, f, ensure_ascii=False, indent=4)
+
 
 # --- PROMPTS (完整版) ---
 def get_conceptualization_prompt_text():
@@ -169,8 +205,73 @@ def call_api_sync(system_prompt, user_prompt, model='deepseek-chat'):
 # --- 路由定义 ---
 @app.route('/')
 def serve_index():
+    # 此路由服务于静态的index.html文件
     return send_from_directory(app.static_folder, 'index.html')
 
+# --- 新增的用户认证和数据API ---
+@app.route('/api/register', methods=['POST'])
+def register():
+    """处理用户注册"""
+    data = request.get_json()
+    username = data.get('username')
+    password = data.get('password')
+
+    if not username or not password:
+        return jsonify({"message": "用户名和密码不能为空"}), 400
+
+    all_data = read_data()
+    if username in all_data.get('users', {}):
+        return jsonify({"message": "用户名已存在"}), 409
+
+    if 'users' not in all_data:
+        all_data['users'] = {}
+    all_data['users'][username] = {"password": password}
+    write_data(all_data)
+    
+    return jsonify({"message": "注册成功！"}), 201
+
+@app.route('/api/login', methods=['POST'])
+def login():
+    """处理用户登录"""
+    data = request.get_json()
+    username = data.get('username')
+    password = data.get('password')
+    
+    all_data = read_data()
+    user = all_data.get('users', {}).get(username)
+
+    if not user:
+        return jsonify({"message": "用户不存在"}), 404
+    
+    if user['password'] == password:
+        return jsonify({"message": f"欢迎回来, {username}!"}), 200
+    else:
+        return jsonify({"message": "密码错误"}), 401
+
+@app.route('/api/data', methods=['GET'])
+def get_data():
+    """获取所有应用数据（除用户密码外）"""
+    all_data = read_data()
+    # 从数据中移除用户信息，以确保安全
+    data_to_send = {k: v for k, v in all_data.items() if k != 'users'}
+    return jsonify(data_to_send)
+
+@app.route('/api/data', methods=['POST'])
+def save_data():
+    """保存应用数据"""
+    new_data = request.get_json()
+    all_data = read_data()
+
+    # 更新数据，但不触及users部分
+    all_data['clients'] = new_data.get('clients', all_data.get('clients'))
+    all_data['counselors'] = new_data.get('counselors', all_data.get('counselors'))
+    all_data['appointments'] = new_data.get('appointments', all_data.get('appointments'))
+    
+    write_data(all_data)
+    return jsonify({"message": "数据保存成功"}), 200
+
+
+# --- 保留的AI功能路由 ---
 @app.route('/api/upload-and-analyze', methods=['POST'])
 def upload_and_analyze():
     app.logger.info("[ROUTE_HIT] /api/upload-and-analyze")
@@ -205,8 +306,6 @@ def generate_supervision():
         return jsonify({"success": True, "supervision": {"status": "Complete", "content": supervision_content}})
     except Exception as e:
         return jsonify({"error": f"服务器内部错误: {e}"}), 500
-
-# 注意：/api/call-ai 路由已被移除
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
