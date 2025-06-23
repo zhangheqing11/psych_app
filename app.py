@@ -24,6 +24,8 @@ import json
 import traceback
 import logging
 import time
+# fcntl用于文件锁，以防止在多进程环境下发生数据竞争，适用于Unix/Linux系统（如Render部署环境）
+import fcntl
 
 # --- Flask 应用设置 ---
 # 定义静态文件夹的路径，使其相对于此文件的位置，这在部署时更可靠
@@ -42,7 +44,7 @@ GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "YOUR_GEMINI_API_KEY")
 GEMINI_API_URL = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={GEMINI_API_KEY}"
 
 
-# --- 辅助函数：数据持久化 ---
+# --- 辅助函数：数据持久化 (带文件锁) ---
 def get_default_data_structure():
     """返回一个空的、默认的数据结构，用于初始化或在文件损坏时重置。"""
     return {
@@ -56,29 +58,36 @@ def get_default_data_structure():
     }
 
 def read_data():
-    """从JSON文件读取数据。如果文件不存在或为空，则创建一个带有默认结构的新文件。"""
+    """从JSON文件读取数据，使用共享锁防止读取时文件被修改。如果文件不存在或为空，则创建一个新文件。"""
     if not os.path.exists(DATA_FILE):
         app.logger.info(f"数据文件 '{DATA_FILE}' 不存在，将创建新文件。")
+        # write_data 包含自己的锁，所以这里调用是安全的
         write_data(get_default_data_structure())
         return get_default_data_structure()
     try:
         with open(DATA_FILE, 'r', encoding='utf-8') as f:
+            # 获取共享锁，允许多个进程同时读取
+            fcntl.flock(f, fcntl.LOCK_SH)
             content = f.read()
-            # 如果文件为空，则用默认结构重置
-            if not content.strip():
-                app.logger.warning(f"数据文件 '{DATA_FILE}' 为空，将使用默认数据进行初始化。")
-                write_data(get_default_data_structure())
-                return get_default_data_structure()
-            return json.loads(content)
-    except (json.JSONDecodeError, FileNotFoundError) as e:
+            # 当 'with' 块结束时，文件关闭，锁自动释放
+        
+        if not content.strip():
+            app.logger.warning(f"数据文件 '{DATA_FILE}' 为空，将使用默认数据进行初始化。")
+            write_data(get_default_data_structure())
+            return get_default_data_structure()
+        return json.loads(content)
+    except Exception as e:
         app.logger.error(f"读取或解析 '{DATA_FILE}' 时出错: {e}. 将返回默认数据结构。")
         return get_default_data_structure()
 
 def write_data(data):
-    """将数据以格式化的JSON形式写入文件，确保UTF-8编码。"""
+    """将数据以格式化的JSON形式写入文件，使用排他锁确保写入操作的原子性。"""
     try:
         with open(DATA_FILE, 'w', encoding='utf-8') as f:
+            # 获取排他锁，在写入完成前，其他所有读写操作都会被阻塞
+            fcntl.flock(f, fcntl.LOCK_EX)
             json.dump(data, f, ensure_ascii=False, indent=4)
+            # 当 'with' 块结束时，文件关闭，锁自动释放
     except IOError as e:
         app.logger.error(f"无法写入数据到 '{DATA_FILE}': {e}")
 
@@ -250,8 +259,7 @@ def register():
                 "joinDate": time.strftime("%Y-%m-%d"),
             }
             all_data['clients'].append(new_client)
-    # --- 修复 ---
-    # 如果注册的是'咨询师'，同样自动创建其档案，这解决了之前版本中的一个bug。
+    # 如果注册的是'咨询师'，同样自动创建其档案
     elif role == 'counselor':
         if not any(c.get('username') == username for c in all_data['counselors']):
             new_counselor = {
@@ -298,57 +306,61 @@ def login():
 
 # --- 应用核心数据 API ---
 
-@app.route('/api/data/all', methods=['GET'])
-def get_all_data():
-    """为所有登录用户提供统一的数据获取入口。前端将根据用户角色自行筛选显示内容。"""
-    all_data = read_data()
-    # 返回除用户信息外的主要数据
-    response_data = {
-        "clients": all_data.get('clients', []),
-        "counselors": all_data.get('counselors', []),
-        "appointments": all_data.get('appointments', [])
-    }
-    return jsonify(response_data)
+@app.route('/api/data/all', methods=['GET', 'POST'])
+def handle_all_data():
+    """
+    为所有登录用户提供统一的数据获取入口 (GET)。
+    也处理来自管理员的批量数据保存请求 (POST)，以匹配前端逻辑。
+    """
+    if request.method == 'GET':
+        all_data = read_data()
+        response_data = {
+            "clients": all_data.get('clients', []),
+            "counselors": all_data.get('counselors', []),
+            "appointments": all_data.get('appointments', [])
+        }
+        return jsonify(response_data)
+    
+    if request.method == 'POST':
+        # 这个端点专门用于管理员保存所有数据
+        app.logger.info("收到管理员通过 /api/data/all 保存数据的请求。")
+        all_data = read_data()
+        new_data = request.get_json()
+        
+        # 为了安全，只更新预期的键
+        all_data['clients'] = new_data.get('clients', all_data.get('clients', []))
+        all_data['counselors'] = new_data.get('counselors', all_data.get('counselors', []))
+        all_data['appointments'] = new_data.get('appointments', all_data.get('appointments', []))
+        
+        write_data(all_data)
+        return jsonify({"message": "管理员数据已成功保存"}), 200
 
-# 新增：一个统一的保存端点，根据角色进行不同的操作
 @app.route('/api/data/<role>/<username>', methods=['POST'])
 def save_data_by_role(role, username):
-    """根据用户角色保存数据。"""
+    """根据用户角色保存数据。管理员的保存请求由 /api/data/all 处理。"""
     app.logger.info(f"收到来自 '{username}' (角色: {role}) 的数据保存请求。")
     all_data = read_data()
     
-    # 验证用户是否存在且角色匹配
     user_info = all_data.get('users', {}).get(username)
     if not user_info or user_info['role'] != role:
-        # 特殊处理管理员角色
+        # 管理员角色已在 /api/data/all 中处理，这里排除
         if not (role == 'manager' and username == 'Manager'):
              return jsonify({"message": "无权操作或用户信息不匹配"}), 403
 
-    # 管理员可以保存所有数据
-    if role == 'manager':
-        new_data = request.get_json()
-        all_data['clients'] = new_data.get('clients', all_data['clients'])
-        all_data['counselors'] = new_data.get('counselors', all_data['counselors'])
-        all_data['appointments'] = new_data.get('appointments', all_data['appointments'])
-        write_data(all_data)
-        return jsonify({"message": "管理员数据保存成功"}), 200
-
-    # 咨询师可以保存所有数据 (前端已处理权限)
+    # 此端点现在只处理咨询师和来访者
     if role == 'counselor':
         new_data = request.get_json()
-        all_data['clients'] = new_data.get('clients', all_data['clients'])
-        all_data['counselors'] = new_data.get('counselors', all_data['counselors'])
-        all_data['appointments'] = new_data.get('appointments', all_data['appointments'])
+        all_data['clients'] = new_data.get('clients', all_data.get('clients',[]))
+        all_data['counselors'] = new_data.get('counselors', all_data.get('counselors',[]))
+        all_data['appointments'] = new_data.get('appointments', all_data.get('appointments',[]))
         write_data(all_data)
         return jsonify({"message": "咨询师数据保存成功"}), 200
 
-    # 来访者只能更新自己的档案
     if role == 'client':
         updated_client_profile = request.get_json()
         client_found = False
         for i, client in enumerate(all_data['clients']):
             if client.get('username') == username:
-                # 只更新前端传递过来的字段，保留后端管理的其他字段
                 all_data['clients'][i].update(updated_client_profile)
                 client_found = True
                 break
@@ -366,7 +378,6 @@ def save_data_by_role(role, username):
 def call_gemini_api(system_prompt, user_prompt):
     """调用Gemini API并返回生成的文本内容。"""
     headers = {'Content-Type': 'application/json'}
-    # 结合系统指令和用户输入
     payload = {
         "contents": [{
             "role": "user", 
@@ -374,11 +385,9 @@ def call_gemini_api(system_prompt, user_prompt):
         }]
     }
     try:
-        # 发起POST请求，设置较长的超时时间
         response = requests.post(GEMINI_API_URL, headers=headers, json=payload, timeout=300)
-        response.raise_for_status()  # 如果HTTP状态码不是2xx，则抛出异常
+        response.raise_for_status()
         data = response.json()
-        # 解析响应并提取内容
         content = data['candidates'][0]['content']['parts'][0]['text']
         return content
     except requests.exceptions.RequestException as e:
