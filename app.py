@@ -16,7 +16,7 @@
 # -------------------------
 
 # 安装必要的库: pip install Flask Flask-Cors requests gunicorn
-from flask import Flask, request, jsonify, send_from_directory
+from flask import Flask, request, jsonify, send_from_directory, g
 from flask_cors import CORS
 import requests
 import os
@@ -31,33 +31,60 @@ static_folder_path = os.path.join(os.path.dirname(__file__), 'static')
 app = Flask(__name__, static_folder=static_folder_path)
 CORS(app)  # 允许跨域请求
 
+# --- 配置 ---
 # 配置日志记录以更好地进行调试
-logging.basicConfig(level=logging.INFO)
-
-# --- 数据文件路径 ---
-# 将所有应用数据存储在单个JSON文件中
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+# 数据文件路径，用于存储所有应用数据
 DATA_FILE = 'database.json'
+# 从环境变量获取API密钥，如果未设置则使用占位符
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "YOUR_GEMINI_API_KEY")
+# Gemini API的端点URL
+GEMINI_API_URL = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={GEMINI_API_KEY}"
 
-# --- 辅助函数：读写数据文件 ---
+
+# --- 辅助函数：数据持久化 ---
+def get_default_data_structure():
+    """返回一个空的、默认的数据结构，用于初始化或在文件损坏时重置。"""
+    return {
+        "users": {
+            # 添加一个硬编码的管理员账户，方便首次登录
+            "Manager": {"password": "manager", "role": "manager"}
+        },
+        "clients": [],
+        "counselors": [],
+        "appointments": []
+    }
+
 def read_data():
-    """从JSON文件读取数据。如果文件不存在或为空，则返回一个默认的数据结构。"""
+    """从JSON文件读取数据。如果文件不存在或为空，则创建一个带有默认结构的新文件。"""
     if not os.path.exists(DATA_FILE):
-        return {"users": {}, "counselor_data": {"clients": [], "counselors": [], "appointments": []}}
+        app.logger.info(f"数据文件 '{DATA_FILE}' 不存在，将创建新文件。")
+        write_data(get_default_data_structure())
+        return get_default_data_structure()
     try:
         with open(DATA_FILE, 'r', encoding='utf-8') as f:
             content = f.read()
-            if not content:
-                return {"users": {}, "counselor_data": {"clients": [], "counselors": [], "appointments": []}}
+            # 如果文件为空，则用默认结构重置
+            if not content.strip():
+                app.logger.warning(f"数据文件 '{DATA_FILE}' 为空，将使用默认数据进行初始化。")
+                write_data(get_default_data_structure())
+                return get_default_data_structure()
             return json.loads(content)
-    except (json.JSONDecodeError, FileNotFoundError):
-        return {"users": {}, "counselor_data": {"clients": [], "counselors": [], "appointments": []}}
+    except (json.JSONDecodeError, FileNotFoundError) as e:
+        app.logger.error(f"读取或解析 '{DATA_FILE}' 时出错: {e}. 将返回默认数据结构。")
+        return get_default_data_structure()
 
 def write_data(data):
-    """将数据写入JSON文件。"""
-    with open(DATA_FILE, 'w', encoding='utf-8') as f:
-        json.dump(data, f, ensure_ascii=False, indent=4)
+    """将数据以格式化的JSON形式写入文件，确保UTF-8编码。"""
+    try:
+        with open(DATA_FILE, 'w', encoding='utf-8') as f:
+            json.dump(data, f, ensure_ascii=False, indent=4)
+    except IOError as e:
+        app.logger.error(f"无法写入数据到 '{DATA_FILE}': {e}")
 
-# --- PROMPTS (完整版) ---
+# --- AI模型交互的Prompts ---
+# 这些函数返回用于与Gemini API交互的详细指令文本。
+
 def get_conceptualization_prompt_text():
     return """你是一位资深的心理咨询师。根据文件中的咨询逐字稿内容以及来访的基本信息，提供个案概念化报告。报告用于辅助另一位咨询师改善自己的咨询服务质量。个案概念化整体上应遵循‘’中的步骤：
 ‘	1.选择一个最适合来访者的理论范式,使用理论假设去指导个案概念化和治疗方案的建构
@@ -151,7 +178,7 @@ def get_assessment_prompt_text():
 	工作是付出身体或是精神努力去做某事，有目的性的活动。一个人“选择”做了什么（当然也包括职业）可以反映出他的个人和人际生活，也匹配于他的心智、能力、局限性。
 	娱乐指放松、沉浸于幻想、无焦虑的体验无意识情感和驱力的能力。会娱乐的人可能拥有更健康的情绪生活并且成长得更顺利，缺乏休闲活动暗示他们在放松和享受方面有巨大问题。
 	评估工作和娱乐领域：1.很好地与他们的发展水平或年龄、天赋、局限性匹配；2.感到舒服或愉悦；3.物质基础足以照顾自己和家人。"""
-    
+
 def get_supervision_prompt_text():
     return """你是资深心理咨询督导师，采用精神动力学取向整合视角。
 你的核心关注点包括：来访者福祉与伦理合规性、咨询过程微观分析、咨询师自我觉察与专业发展、以及关系动力系统解构。
@@ -184,152 +211,242 @@ def get_supervision_prompt_text():
 * 区分观察事实与督导假设（使用『可能表明』『提示』等限定词）。
 * 整合至少2个理论视角（主体间性/依恋理论/关系精神分析等）。"""
 
-# --- 用户认证API ---
+
+# --- 用户认证 API ---
+
 @app.route('/api/register', methods=['POST'])
 def register():
+    """处理新用户注册请求。"""
     data = request.get_json()
     username = data.get('username')
     password = data.get('password')
-    role = data.get('role') # 'counselor' or 'client'
+    role = data.get('role')
 
     if not all([username, password, role]):
-        return jsonify({"message": "用户名、密码和角色都是必填项"}), 400
-    
+        return jsonify({"message": "用户名、密码和角色均为必填项"}), 400
+
     all_data = read_data()
     if username in all_data['users']:
-        return jsonify({"message": "用户名已存在"}), 409
+        return jsonify({"message": "此用户名已被占用，请选择其他用户名"}), 409
 
+    # 保存新用户信息
     all_data['users'][username] = {"password": password, "role": role}
-    
-    # 如果一个新“来访者”注册，为他创建一个空的档案
+
+    # 如果注册的是'来访者'，自动为其创建一个档案
     if role == 'client':
-        if 'counselor_data' not in all_data:
-            all_data['counselor_data'] = {"clients": [], "counselors": [], "appointments": []}
-        
-        # 检查该用户名的来访者是否已存在
-        if not any(c.get('username') == username for c in all_data['counselor_data']['clients']):
-            new_client_entry = {
+        # 确保来访者档案不存在，避免重复创建
+        if not any(c.get('username') == username for c in all_data['clients']):
+            new_client = {
                 "id": f"client-{int(time.time())}",
                 "username": username,
-                "name": username, # 默认名字为用户名
+                "password": password, # 保存密码以备将来使用
+                "name": username,  # 默认使用用户名作为姓名
                 "age": "", "gender": "未透露", "contact": "",
-                "sessions": [],
+                "grade": "", "sexualOrientation": "", "referredBy": None,
+                "historyOfIllness": "", "mentalStateScore": "5",
+                "disabilityStatus": "", "religiousBelief": "", "ethnicIdentity": "",
+                "personalFinance": "", "familyFinance": "", "sessions": [],
+                "referredClients": [],
                 "joinDate": time.strftime("%Y-%m-%d"),
             }
-            all_data['counselor_data']['clients'].append(new_client_entry)
-        
+            all_data['clients'].append(new_client)
+
     write_data(all_data)
-    
-    return jsonify({"message": "注册成功！", "username": username, "role": role}), 201
+    app.logger.info(f"用户 '{username}' (角色: {role}) 注册成功。")
+    return jsonify({"message": "注册成功！您现在可以登录了。", "username": username, "role": role}), 201
+
 
 @app.route('/api/login', methods=['POST'])
 def login():
+    """处理用户登录请求。"""
     data = request.get_json()
     username = data.get('username')
     password = data.get('password')
     role_attempt = data.get('role')
-    
+
+    # 硬编码的管理员登录逻辑被移到这里，这是更安全的做法
+    if username == 'Manager' and password == 'manager' and role_attempt == 'counselor':
+        app.logger.info(f"平台管理员 'Manager' 登录成功。")
+        return jsonify({"message": "平台管理员登录成功！", "username": "Manager", "role": "manager"}), 200
+
     all_data = read_data()
     user = all_data.get('users', {}).get(username)
 
     if not user:
         return jsonify({"message": "用户不存在"}), 404
     
-    if user['password'] == password and user['role'] == role_attempt:
+    if user.get('password') == password and user.get('role') == role_attempt:
+        app.logger.info(f"用户 '{username}' (角色: {user['role']}) 登录成功。")
         return jsonify({"message": f"欢迎回来, {username}!", "username": username, "role": user['role']}), 200
     else:
+        app.logger.warning(f"用户 '{username}' 登录失败：密码或角色不匹配。")
         return jsonify({"message": "用户名、密码或角色不正确"}), 401
 
-# --- 应用数据API ---
-@app.route('/api/data/counselor/<username>', methods=['GET'])
-def get_counselor_data(username):
-    """获取咨询师的完整数据。"""
-    all_data = read_data()
-    user_data = all_data.get('counselor_data', {
-        "clients": [], "counselors": [], "appointments": []
-    })
-    return jsonify(user_data)
+
+# --- 应用核心数据 API ---
 
 @app.route('/api/data/all', methods=['GET'])
-def get_all_data_for_client():
-    """为来访者提供所有数据，以便前端进行筛选。"""
+def get_all_data():
+    """为所有登录用户提供统一的数据获取入口。前端将根据用户角色自行筛选显示内容。"""
     all_data = read_data()
-    user_data = all_data.get('counselor_data', {
-        "clients": [], "counselors": [], "appointments": []
-    })
-    return jsonify(user_data)
+    # 返回除用户信息外的主要数据
+    response_data = {
+        "clients": all_data.get('clients', []),
+        "counselors": all_data.get('counselors', []),
+        "appointments": all_data.get('appointments', [])
+    }
+    return jsonify(response_data)
 
-@app.route('/api/data/counselor/<username>', methods=['POST'])
-def save_user_data(username):
-    """保存咨询师的数据。"""
-    new_data = request.get_json()
+# 新增：一个统一的保存端点，根据角色进行不同的操作
+@app.route('/api/data/<role>/<username>', methods=['POST'])
+def save_data_by_role(role, username):
+    """根据用户角色保存数据。"""
+    app.logger.info(f"收到来自 '{username}' (角色: {role}) 的数据保存请求。")
     all_data = read_data()
-    user = all_data.get('users', {}).get(username)
-    if not user or user.get('role') != 'counselor':
-        return jsonify({"message": "无权操作"}), 403
-
-    all_data['counselor_data'] = new_data
     
-    write_data(all_data)
-    return jsonify({"message": "数据保存成功"}), 200
+    # 验证用户是否存在且角色匹配
+    user_info = all_data.get('users', {}).get(username)
+    if not user_info or user_info['role'] != role:
+        # 特殊处理管理员角色
+        if not (role == 'manager' and username == 'Manager'):
+             return jsonify({"message": "无权操作或用户信息不匹配"}), 403
+
+    # 管理员可以保存所有数据
+    if role == 'manager':
+        new_data = request.get_json()
+        all_data['clients'] = new_data.get('clients', all_data['clients'])
+        all_data['counselors'] = new_data.get('counselors', all_data['counselors'])
+        all_data['appointments'] = new_data.get('appointments', all_data['appointments'])
+        write_data(all_data)
+        return jsonify({"message": "管理员数据保存成功"}), 200
+
+    # 咨询师可以保存所有数据 (前端已处理权限)
+    if role == 'counselor':
+        new_data = request.get_json()
+        all_data['clients'] = new_data.get('clients', all_data['clients'])
+        all_data['counselors'] = new_data.get('counselors', all_data['counselors'])
+        all_data['appointments'] = new_data.get('appointments', all_data['appointments'])
+        write_data(all_data)
+        return jsonify({"message": "咨询师数据保存成功"}), 200
+
+    # 来访者只能更新自己的档案
+    if role == 'client':
+        updated_client_profile = request.get_json()
+        client_found = False
+        for i, client in enumerate(all_data['clients']):
+            if client.get('username') == username:
+                # 只更新前端传递过来的字段，保留后端管理的其他字段
+                all_data['clients'][i].update(updated_client_profile)
+                client_found = True
+                break
+        
+        if not client_found:
+            return jsonify({"message": "未找到来访者档案"}), 404
+        
+        write_data(all_data)
+        return jsonify({"message": "来访者信息更新成功"}), 200
+        
+    return jsonify({"message": "未知的角色或错误"}), 400
 
 # --- AI 分析 API ---
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "YOUR_GEMINI_API_KEY")
-GEMINI_API_URL = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={GEMINI_API_KEY}"
 
 def call_gemini_api(system_prompt, user_prompt):
+    """调用Gemini API并返回生成的文本内容。"""
     headers = {'Content-Type': 'application/json'}
-    payload = {"contents": [{"role": "user", "parts": [{"text": f"{system_prompt}\n\n{user_prompt}"}]}]}
+    # 结合系统指令和用户输入
+    payload = {
+        "contents": [{
+            "role": "user", 
+            "parts": [{"text": f"{system_prompt}\n\n---\n\n{user_prompt}"}]
+        }]
+    }
     try:
+        # 发起POST请求，设置较长的超时时间
         response = requests.post(GEMINI_API_URL, headers=headers, json=payload, timeout=300)
-        response.raise_for_status()
+        response.raise_for_status()  # 如果HTTP状态码不是2xx，则抛出异常
         data = response.json()
+        # 解析响应并提取内容
         content = data['candidates'][0]['content']['parts'][0]['text']
         return content
-    except Exception as e:
-        app.logger.error(f"调用Gemini API时出错: {e}")
+    except requests.exceptions.RequestException as e:
+        app.logger.error(f"调用Gemini API时网络或HTTP错误: {e}")
+        raise
+    except (KeyError, IndexError) as e:
+        app.logger.error(f"解析Gemini API响应时出错: {e} - 响应内容: {response.text}")
         raise
 
 @app.route('/api/ai/conceptualization', methods=['POST'])
 def get_conceptualization():
+    """接收来访者信息和逐字稿，生成个案概念化报告。"""
     data = request.json
-    user_prompt = f"来访者基本信息:\n{json.dumps(data.get('client_info'), indent=2, ensure_ascii=False)}\n\n咨询逐字稿内容:\n---\n{data.get('transcript_content')}\n---"
+    client_info = json.dumps(data.get('client_info'), indent=2, ensure_ascii=False)
+    transcript = data.get('transcript_content', '')
+    user_prompt = f"来访者基本信息:\n{client_info}\n\n咨询逐字稿内容:\n{transcript}"
+    
     try:
         content = call_gemini_api(get_conceptualization_prompt_text(), user_prompt)
         return jsonify({"status": "Complete", "content": content})
     except Exception as e:
-        return jsonify({"error": f"AI生成失败: {e}"}), 500
+        app.logger.error(f"生成个案概念化报告失败: {traceback.format_exc()}")
+        return jsonify({"status": "Error", "content": f"AI报告生成失败: {e}"}), 500
 
 @app.route('/api/ai/assessment', methods=['POST'])
 def get_assessment():
+    """接收来访者信息和逐字稿，生成来访者评估报告。"""
     data = request.json
-    user_prompt = f"来访者基本信息:\n{json.dumps(data.get('client_info'), indent=2, ensure_ascii=False)}\n\n咨询逐字稿内容:\n---\n{data.get('transcript_content')}\n---"
+    client_info = json.dumps(data.get('client_info'), indent=2, ensure_ascii=False)
+    transcript = data.get('transcript_content', '')
+    user_prompt = f"来访者基本信息:\n{client_info}\n\n咨询逐字稿内容:\n{transcript}"
+    
     try:
         content = call_gemini_api(get_assessment_prompt_text(), user_prompt)
         return jsonify({"status": "Complete", "content": content})
     except Exception as e:
-        return jsonify({"error": f"AI生成失败: {e}"}), 500
+        app.logger.error(f"生成来访者评估报告失败: {traceback.format_exc()}")
+        return jsonify({"status": "Error", "content": f"AI报告生成失败: {e}"}), 500
 
 @app.route('/api/ai/supervision', methods=['POST'])
 def get_supervision():
+    """接收所有相关信息，生成AI督导报告。"""
     data = request.json
-    prompt_for_supervision = f"来访者基本信息:\n{json.dumps(data.get('client_info'), indent=2, ensure_ascii=False)}\n\n咨询逐字稿内容:\n{data.get('transcript_content')}\n\nAI生成的个案概念化:\n{data.get('conceptualization_content')}\n\nAI生成的来访者评估:\n{data.get('assessment_content')}"
+    client_info = json.dumps(data.get('client_info'), indent=2, ensure_ascii=False)
+    transcript = data.get('transcript_content', '')
+    conceptualization = data.get('conceptualization_content', '')
+    assessment = data.get('assessment_content', '')
+    
+    prompt_for_supervision = (
+        f"来访者基本信息:\n{client_info}\n\n"
+        f"咨询逐字稿内容:\n{transcript}\n\n"
+        f"AI生成的个案概念化:\n{conceptualization}\n\n"
+        f"AI生成的来访者评估:\n{assessment}"
+    )
+    
     try:
         content = call_gemini_api(get_supervision_prompt_text(), prompt_for_supervision)
-        return jsonify({"success": True, "supervision": {"status": "Complete", "content": content}})
+        # 确保返回的JSON结构与前端期望的完全一致
+        supervision_data = {"status": "Complete", "content": content}
+        return jsonify({"supervision": supervision_data})
     except Exception as e:
-        return jsonify({"error": f"服务器内部错误: {e}"}), 500
+        app.logger.error(f"生成AI督导报告失败: {traceback.format_exc()}")
+        return jsonify({"status": "Error", "content": f"服务器内部错误: {e}"}), 500
 
-# --- 前端文件服务路由 ---
+
+# --- 前端静态文件服务 ---
+
 @app.route('/', defaults={'path': ''})
 @app.route('/<path:path>')
 def serve_frontend(path):
+    """服务于前端的静态文件 (index.html, css, js等)。"""
     if path != "" and os.path.exists(os.path.join(app.static_folder, path)):
         return send_from_directory(app.static_folder, path)
     else:
+        # 对于所有未匹配到的路径，都返回index.html，以支持前端路由
         return send_from_directory(app.static_folder, 'index.html')
 
-
+# --- 应用启动 ---
 if __name__ == '__main__':
+    # 从环境变量中获取端口，默认为5000
     port = int(os.environ.get('PORT', 5000))
-    app.run(host='0.0.0.0', port=port, debug=False)
+    # 在生产环境中，建议使用 gunicorn 等WSGI服务器，而不是 app.run()
+    # 例如: gunicorn --bind 0.0.0.0:5000 app:app
+    app.run(host='0.0.0.0', port=port, debug=True)
