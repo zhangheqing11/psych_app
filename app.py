@@ -4,6 +4,7 @@
 #    Flask-Cors
 #    requests
 #    gunicorn
+#    filelock
 #
 # 2. 您的项目文件结构必须如下：
 #    / (项目根目录)
@@ -15,85 +16,83 @@
 # 部署失败或出现白屏通常是因为文件结构不正确。
 # -------------------------
 
-# 安装必要的库: pip install Flask Flask-Cors requests gunicorn
-from flask import Flask, request, jsonify, send_from_directory, g
-from flask_cors import CORS
-import requests
 import os
 import json
-import traceback
 import logging
 import time
-# fcntl用于文件锁，以防止在多进程环境下发生数据竞争，适用于Unix/Linux系统（如Render部署环境）
-import fcntl
+import traceback
+from flask import Flask, request, jsonify, send_from_directory
+from flask_cors import CORS
+import requests
+# 使用 filelock 替代 fcntl，以实现跨平台文件锁定
+from filelock import FileLock, Timeout
 
-# --- Flask 应用设置 ---
-# 定义静态文件夹的路径，使其相对于此文件的位置，这在部署时更可靠
+# --- 应用设置与配置 ---
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
 static_folder_path = os.path.join(os.path.dirname(__file__), 'static')
 app = Flask(__name__, static_folder=static_folder_path)
-CORS(app)  # 允许跨域请求
+CORS(app)
 
-# --- 配置 ---
-# 配置日志记录以更好地进行调试
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-# 数据文件路径，用于存储所有应用数据
+# 数据文件和锁文件的路径
 DATA_FILE = 'database.json'
-# 从环境变量获取API密钥，如果未设置则使用占位符
+LOCK_FILE = 'database.json.lock'
+
+# API 密钥配置
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "YOUR_GEMINI_API_KEY")
-# Gemini API的端点URL
 GEMINI_API_URL = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={GEMINI_API_KEY}"
 
 
-# --- 辅助函数：数据持久化 (带文件锁) ---
+# --- 数据持久化 (使用跨平台文件锁) ---
 def get_default_data_structure():
-    """返回一个空的、默认的数据结构，用于初始化或在文件损坏时重置。"""
+    """返回一个空的、默认的数据结构。"""
     return {
-        "users": {
-            # 添加一个硬编码的管理员账户，方便首次登录
-            "Manager": {"password": "manager", "role": "manager"}
-        },
+        "users": {"Manager": {"password": "manager", "role": "manager"}},
         "clients": [],
         "counselors": [],
         "appointments": []
     }
 
 def read_data():
-    """从JSON文件读取数据，使用共享锁防止读取时文件被修改。如果文件不存在或为空，则创建一个新文件。"""
-    if not os.path.exists(DATA_FILE):
-        app.logger.info(f"数据文件 '{DATA_FILE}' 不存在，将创建新文件。")
-        # write_data 包含自己的锁，所以这里调用是安全的
-        write_data(get_default_data_structure())
-        return get_default_data_structure()
+    """从JSON文件安全地读取数据，使用共享锁。"""
+    lock = FileLock(LOCK_FILE, timeout=5)
     try:
-        with open(DATA_FILE, 'r', encoding='utf-8') as f:
-            # 获取共享锁，允许多个进程同时读取
-            fcntl.flock(f, fcntl.LOCK_SH)
-            content = f.read()
-            # 当 'with' 块结束时，文件关闭，锁自动释放
-        
-        if not content.strip():
-            app.logger.warning(f"数据文件 '{DATA_FILE}' 为空，将使用默认数据进行初始化。")
-            write_data(get_default_data_structure())
-            return get_default_data_structure()
-        return json.loads(content)
+        with lock.acquire(timeout=5):
+            if not os.path.exists(DATA_FILE):
+                app.logger.info(f"'{DATA_FILE}' not found, creating a new one.")
+                with open(DATA_FILE, 'w', encoding='utf-8') as f:
+                    json.dump(get_default_data_structure(), f, ensure_ascii=False, indent=4)
+                return get_default_data_structure()
+            
+            with open(DATA_FILE, 'r', encoding='utf-8') as f:
+                content = f.read()
+                if not content.strip():
+                    app.logger.warning(f"'{DATA_FILE}' is empty, re-initializing.")
+                    return get_default_data_structure()
+                return json.loads(content)
+    except Timeout:
+        app.logger.error("Could not acquire lock to read data file, another process may be holding it.")
+        return None
     except Exception as e:
-        app.logger.error(f"读取或解析 '{DATA_FILE}' 时出错: {e}. 将返回默认数据结构。")
-        return get_default_data_structure()
+        app.logger.error(f"Error reading or parsing '{DATA_FILE}': {e}")
+        return None
 
 def write_data(data):
-    """将数据以格式化的JSON形式写入文件，使用排他锁确保写入操作的原子性。"""
+    """向JSON文件安全地写入数据，使用排他锁。"""
+    lock = FileLock(LOCK_FILE, timeout=5)
     try:
-        with open(DATA_FILE, 'w', encoding='utf-8') as f:
-            # 获取排他锁，在写入完成前，其他所有读写操作都会被阻塞
-            fcntl.flock(f, fcntl.LOCK_EX)
-            json.dump(data, f, ensure_ascii=False, indent=4)
-            # 当 'with' 块结束时，文件关闭，锁自动释放
-    except IOError as e:
-        app.logger.error(f"无法写入数据到 '{DATA_FILE}': {e}")
+        with lock.acquire(timeout=5):
+            with open(DATA_FILE, 'w', encoding='utf-8') as f:
+                json.dump(data, f, ensure_ascii=False, indent=4)
+        return True
+    except Timeout:
+        app.logger.error("Could not acquire lock to write to data file.")
+        return False
+    except Exception as e:
+        app.logger.error(f"Failed to write to '{DATA_FILE}': {e}")
+        return False
 
-# --- AI模型交互的Prompts ---
-# 这些函数返回用于与Gemini API交互的详细指令文本。
-
+# --- AI 模型交互 Prompts (保持不变) ---
 def get_conceptualization_prompt_text():
     return """你是一位资深的心理咨询师。根据文件中的咨询逐字稿内容以及来访的基本信息，提供个案概念化报告。报告用于辅助另一位咨询师改善自己的咨询服务质量。个案概念化整体上应遵循‘’中的步骤：
 ‘	1.选择一个最适合来访者的理论范式,使用理论假设去指导个案概念化和治疗方案的建构
@@ -227,6 +226,9 @@ def get_supervision_prompt_text():
 def register():
     """处理新用户注册请求。"""
     data = request.get_json()
+    if not data:
+        return jsonify({"message": "无效的请求"}), 400
+    
     username = data.get('username')
     password = data.get('password')
     role = data.get('role')
@@ -235,13 +237,15 @@ def register():
         return jsonify({"message": "用户名、密码和角色均为必填项"}), 400
 
     all_data = read_data()
-    if username in all_data['users']:
+    if all_data is None:
+        return jsonify({"message": "服务器暂时无法处理数据"}), 500
+        
+    if username in all_data.get('users', {}):
         return jsonify({"message": "此用户名已被占用，请选择其他用户名"}), 409
 
     # 保存新用户信息
     all_data['users'][username] = {"password": password, "role": role}
 
-    # 如果注册的是'来访者'，自动为其创建一个档案
     if role == 'client':
         if not any(c.get('username') == username for c in all_data['clients']):
             new_client = {
@@ -253,7 +257,6 @@ def register():
                 "sessions": [], "referredClients": [], "joinDate": time.strftime("%Y-%m-%d"),
             }
             all_data['clients'].append(new_client)
-    # 如果注册的是'咨询师'，同样自动创建其档案
     elif role == 'counselor':
         if not any(c.get('username') == username for c in all_data['counselors']):
             new_counselor = {
@@ -262,35 +265,42 @@ def register():
             }
             all_data['counselors'].append(new_counselor)
 
-    write_data(all_data)
-    app.logger.info(f"用户 '{username}' (角色: {role}) 注册成功。")
-    return jsonify({"message": "注册成功！您现在可以登录了。", "username": username, "role": role}), 201
+    if write_data(all_data):
+        app.logger.info(f"User '{username}' (role: {role}) registered successfully.")
+        return jsonify({"message": "注册成功！您现在可以登录了。", "username": username, "role": role}), 201
+    else:
+        return jsonify({"message": "服务器在保存数据时出错"}), 500
 
 
 @app.route('/api/login', methods=['POST'])
 def login():
     """处理用户登录请求。"""
     data = request.get_json()
+    if not data:
+        return jsonify({"message": "无效的请求"}), 400
+
     username = data.get('username')
     password = data.get('password')
     role_attempt = data.get('role')
 
-    # 硬编码的管理员登录逻辑被移到这里，这是更安全的做法
     if username == 'Manager' and password == 'manager' and role_attempt == 'counselor':
-        app.logger.info(f"平台管理员 'Manager' 登录成功。")
+        app.logger.info("Admin 'Manager' logged in successfully.")
         return jsonify({"message": "平台管理员登录成功！", "username": "Manager", "role": "manager"}), 200
 
     all_data = read_data()
+    if all_data is None:
+        return jsonify({"message": "服务器暂时无法处理数据"}), 500
+
     user = all_data.get('users', {}).get(username)
 
     if not user:
         return jsonify({"message": "用户不存在"}), 404
     
     if user.get('password') == password and user.get('role') == role_attempt:
-        app.logger.info(f"用户 '{username}' (角色: {user['role']}) 登录成功。")
+        app.logger.info(f"User '{username}' (role: {user['role']}) logged in successfully.")
         return jsonify({"message": f"欢迎回来, {username}!", "username": username, "role": user['role']}), 200
     else:
-        app.logger.warning(f"用户 '{username}' 登录失败：密码或角色不匹配。")
+        app.logger.warning(f"Failed login attempt for user '{username}'.")
         return jsonify({"message": "用户名、密码或角色不正确"}), 401
 
 
@@ -298,9 +308,11 @@ def login():
 
 @app.route('/api/data/all', methods=['GET', 'POST'])
 def handle_all_data():
-    """为所有登录用户提供统一的数据获取入口 (GET)。也处理来自管理员的批量数据保存请求 (POST)。"""
+    """处理数据获取(GET)和管理员/咨询师的数据保存(POST)。"""
     if request.method == 'GET':
         all_data = read_data()
+        if all_data is None:
+            return jsonify({"message": "服务器暂时无法处理数据"}), 500
         response_data = {
             "clients": all_data.get('clients', []),
             "counselors": all_data.get('counselors', []),
@@ -308,57 +320,74 @@ def handle_all_data():
         }
         return jsonify(response_data)
     
+    # POST方法用于管理员保存
     if request.method == 'POST':
-        app.logger.info("收到通过 /api/data/all 保存数据的请求。")
+        app.logger.info("Received data save request via /api/data/all (Manager).")
         all_data = read_data()
         new_data = request.get_json()
+        if all_data is None or new_data is None:
+            return jsonify({"message": "服务器错误或无效的请求数据"}), 500
         
+        # 安全地更新数据
         all_data['clients'] = new_data.get('clients', all_data.get('clients', []))
         all_data['counselors'] = new_data.get('counselors', all_data.get('counselors', []))
         all_data['appointments'] = new_data.get('appointments', all_data.get('appointments', []))
         
-        write_data(all_data)
-        return jsonify({"message": "数据已成功保存"}), 200
+        if write_data(all_data):
+            return jsonify({"message": "管理员数据已成功保存"}), 200
+        else:
+            return jsonify({"message": "服务器在保存数据时出错"}), 500
 
 @app.route('/api/data/<role>/<username>', methods=['POST'])
 def save_data_by_role(role, username):
-    """根据用户角色保存数据。"""
-    app.logger.info(f"收到来自 '{username}' (角色: {role}) 的数据保存请求。")
+    """根据用户角色保存数据（主要为咨询师和来访者）。"""
+    app.logger.info(f"Received save request for role: {role}, user: {username}")
     all_data = read_data()
-    
+    new_data = request.get_json()
+    if all_data is None or new_data is None:
+        return jsonify({"message": "服务器错误或无效的请求数据"}), 500
+
     user_info = all_data.get('users', {}).get(username)
-    if not user_info or user_info['role'] != role:
+    if not user_info or user_info.get('role') != role:
          return jsonify({"message": "无权操作或用户信息不匹配"}), 403
 
     if role == 'counselor':
-        new_data = request.get_json()
-        all_data.update(new_data)
-        write_data(all_data)
-        return jsonify({"message": "咨询师数据保存成功"}), 200
+        # 修复：安全地合并咨询师提交的完整数据
+        all_data['clients'] = new_data.get('clients', all_data.get('clients', []))
+        all_data['counselors'] = new_data.get('counselors', all_data.get('counselors', []))
+        all_data['appointments'] = new_data.get('appointments', all_data.get('appointments', []))
+        
+        if write_data(all_data):
+            return jsonify({"message": "咨询师数据保存成功"}), 200
+        else:
+            return jsonify({"message": "服务器在保存数据时出错"}), 500
 
     if role == 'client':
-        updated_client_profile = request.get_json()
         client_found = False
-        for i, client in enumerate(all_data['clients']):
+        for i, client in enumerate(all_data.get('clients', [])):
             if client.get('username') == username:
-                all_data['clients'][i].update(updated_client_profile)
+                # 只更新客户端档案，不触及其他数据
+                all_data['clients'][i].update(new_data)
                 client_found = True
                 break
         
         if not client_found:
             return jsonify({"message": "未找到来访者档案"}), 404
         
-        write_data(all_data)
-        return jsonify({"message": "来访者信息更新成功"}), 200
+        if write_data(all_data):
+            return jsonify({"message": "来访者信息更新成功"}), 200
+        else:
+            return jsonify({"message": "服务器在保存数据时出错"}), 500
         
     return jsonify({"message": "未知的角色或错误"}), 400
+
 
 # --- AI 分析 API ---
 
 def call_gemini_api(system_prompt, user_prompt):
     """调用Gemini API并返回生成的文本内容。"""
     headers = {'Content-Type': 'application/json'}
-    payload = { "contents": [{"role": "user", "parts": [{"text": f"{system_prompt}\n\n---\n\n{user_prompt}"}]}] }
+    payload = {"contents": [{"role": "user", "parts": [{"text": f"{system_prompt}\n\n---\n\n{user_prompt}"}]}]}
     try:
         response = requests.post(GEMINI_API_URL, headers=headers, json=payload, timeout=300)
         response.raise_for_status()
@@ -366,65 +395,58 @@ def call_gemini_api(system_prompt, user_prompt):
         content = data['candidates'][0]['content']['parts'][0]['text']
         return content
     except requests.exceptions.RequestException as e:
-        app.logger.error(f"调用Gemini API时网络或HTTP错误: {e}")
+        app.logger.error(f"Network or HTTP error calling Gemini API: {e}")
         raise
     except (KeyError, IndexError) as e:
-        app.logger.error(f"解析Gemini API响应时出错: {e} - 响应内容: {response.text}")
+        app.logger.error(f"Error parsing Gemini API response: {e} - Response: {response.text}")
         raise
 
 @app.route('/api/ai/conceptualization', methods=['POST'])
 def get_conceptualization():
-    """接收来访者信息和逐字稿，生成个案概念化报告。"""
     data = request.json
     client_info = json.dumps(data.get('client_info'), indent=2, ensure_ascii=False)
     transcript = data.get('transcript_content', '')
     user_prompt = f"来访者基本信息:\n{client_info}\n\n咨询逐字稿内容:\n{transcript}"
-    
     try:
         content = call_gemini_api(get_conceptualization_prompt_text(), user_prompt)
         return jsonify({"status": "Complete", "content": content})
     except Exception as e:
-        app.logger.error(f"生成个案概念化报告失败: {traceback.format_exc()}")
-        return jsonify({"status": "Error", "content": f"AI报告生成失败: {e}"}), 500
+        app.logger.error(f"Failed to generate conceptualization: {traceback.format_exc()}")
+        return jsonify({"status": "Error", "content": f"AI report generation failed: {e}"}), 500
 
 @app.route('/api/ai/assessment', methods=['POST'])
 def get_assessment():
-    """接收来访者信息和逐字稿，生成来访者评估报告。"""
     data = request.json
     client_info = json.dumps(data.get('client_info'), indent=2, ensure_ascii=False)
     transcript = data.get('transcript_content', '')
     user_prompt = f"来访者基本信息:\n{client_info}\n\n咨询逐字稿内容:\n{transcript}"
-    
     try:
         content = call_gemini_api(get_assessment_prompt_text(), user_prompt)
         return jsonify({"status": "Complete", "content": content})
     except Exception as e:
-        app.logger.error(f"生成来访者评估报告失败: {traceback.format_exc()}")
-        return jsonify({"status": "Error", "content": f"AI报告生成失败: {e}"}), 500
+        app.logger.error(f"Failed to generate assessment: {traceback.format_exc()}")
+        return jsonify({"status": "Error", "content": f"AI report generation failed: {e}"}), 500
 
 @app.route('/api/ai/supervision', methods=['POST'])
 def get_supervision():
-    """接收所有相关信息，生成AI督导报告。"""
     data = request.json
     client_info = json.dumps(data.get('client_info'), indent=2, ensure_ascii=False)
     transcript = data.get('transcript_content', '')
     conceptualization = data.get('conceptualization_content', '')
     assessment = data.get('assessment_content', '')
-    
     prompt_for_supervision = (
         f"来访者基本信息:\n{client_info}\n\n"
         f"咨询逐字稿内容:\n{transcript}\n\n"
         f"AI生成的个案概念化:\n{conceptualization}\n\n"
         f"AI生成的来访者评估:\n{assessment}"
     )
-    
     try:
         content = call_gemini_api(get_supervision_prompt_text(), prompt_for_supervision)
         supervision_data = {"status": "Complete", "content": content}
         return jsonify({"supervision": supervision_data})
     except Exception as e:
-        app.logger.error(f"生成AI督导报告失败: {traceback.format_exc()}")
-        return jsonify({"status": "Error", "content": f"服务器内部错误: {e}"}), 500
+        app.logger.error(f"Failed to generate supervision report: {traceback.format_exc()}")
+        return jsonify({"status": "Error", "content": f"Internal server error: {e}"}), 500
 
 
 # --- 前端静态文件服务 ---
@@ -441,8 +463,5 @@ def serve_frontend(path):
 
 # --- 应用启动 ---
 if __name__ == '__main__':
-    # 从环境变量中获取端口，默认为5000
     port = int(os.environ.get('PORT', 5000))
-    # 在生产环境中，建议使用 gunicorn 等WSGI服务器，而不是 app.run()
-    # 例如: gunicorn --bind 0.0.0.0:5000 app:app
     app.run(host='0.0.0.0', port=port, debug=True)
