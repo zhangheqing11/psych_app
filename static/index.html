@@ -1,504 +1,231 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>心理咨询师助手</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
-    <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
-    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-    <style>
-        body { font-family: 'Inter', 'Helvetica Neue', 'Arial', sans-serif; }
-        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
-        .animate-fadeIn { animation: fadeIn 0.5s ease-out forwards; }
-        .custom-modal-backdrop { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background-color: rgba(0, 0, 0, 0.6); display: flex; align-items: center; justify-content: center; z-index: 1000; }
-        .custom-modal-content { background: white; padding: 2rem; border-radius: 0.75rem; box-shadow: 0 10px 25px rgba(0, 0, 0, 0.1); text-align: center; max-width: 90%; width: 450px; }
-        .custom-modal-button { margin-top: 1.5rem; padding: 0.75rem 1.5rem; border-radius: 0.5rem; border: none; background-color: #3B82F6; color: white; font-weight: 600; cursor: pointer; transition: background-color 0.2s; }
-        .custom-modal-button:hover { background-color: #2563EB; }
-        .time-slot { display: flex; flex-direction: column; gap: 4px; }
-    </style>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>心理咨询师助手</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    body { font-family: 'Inter', 'Helvetica Neue', 'Arial', sans-serif; }
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+    .animate-fadeIn { animation: fadeIn 0.5s ease-out forwards; }
+    .custom-modal-backdrop {
+      position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+      background-color: rgba(0, 0, 0, 0.6);
+      display: flex; align-items: center; justify-content: center;
+      z-index: 1000;
+    }
+    .custom-modal-content {
+      background: white; padding: 2rem; border-radius: 0.75rem;
+      box-shadow: 0 10px 25px rgba(0, 0, 0, 0.1);
+      text-align: center; max-width: 90%; width: 450px;
+    }
+    .custom-modal-button {
+      margin-top: 1.5rem; padding: 0.75rem 1.5rem; border-radius: 0.5rem;
+      border: none; background-color: #3B82F6; color: white;
+      font-weight: 600; cursor: pointer; transition: background-color 0.2s;
+    }
+    .custom-modal-button:hover { background-color: #2563EB; }
+    .time-slot { display: flex; flex-direction: column; gap: 4px; }
+  </style>
 </head>
 <body class="bg-gray-100">
-    <div id="root"></div>
-    <script type="text/babel">
+  <div id="root"></div>
+
+  <script type="text/babel">
     const App = () => {
-        const { useState, useEffect, useCallback, useMemo } = React;
-        const [appData, setAppData] = useState({ clients: [], counselors: [], appointments: [] });
-        const [isLoading, setIsLoading] = useState(true);
-        const [currentUser, setCurrentUser] = useState(null); // Will store { username, role }
-        const [activeSection, setActiveSection] = useState('schedule');
-        const [selectedClient, setSelectedClient] = useState(null);
-        const [globalLoadingMessage, setGlobalLoadingMessage] = useState('');
-        const [alertInfo, setAlertInfo] = useState({ show: false, message: '' });
-        const [isAssignClientModalOpen, setAssignClientModalOpen] = useState(false);
+      const { useState, useEffect, useCallback } = React;
+      
+      const [appData, setAppData] = useState(null);
+      const [isLoading, setIsLoading] = useState(true);
+      const [currentUser, setCurrentUser] = useState(null); // Will store { username, role }
 
-        // Check for persisted user on initial load
-        useEffect(() => {
-            const persistedUser = localStorage.getItem('currentUser');
-            if(persistedUser) {
-                try {
-                    setCurrentUser(JSON.parse(persistedUser));
-                } catch(e) {
-                    console.error("Failed to parse user from localStorage", e);
-                    localStorage.removeItem('currentUser');
-                }
-            }
+      const [globalLoadingMessage, setGlobalLoadingMessage] = useState('');
+      const [alertInfo, setAlertInfo] = useState({ show: false, message: '' });
+
+      // Check for persisted user on initial load
+      useEffect(() => {
+        const persistedUser = localStorage.getItem('currentUser');
+        if (persistedUser) {
+          try {
+            setCurrentUser(JSON.parse(persistedUser));
+          } catch(e) {
+            console.error("Failed to parse user from localStorage", e);
+            localStorage.removeItem('currentUser');
+          }
+        }
+        setIsLoading(false);
+      }, []);
+
+      const showAlert = useCallback((message) => {
+        setAlertInfo({ show: true, message });
+      }, []);
+      
+      const fetchData = useCallback(async () => {
+        if (!currentUser) {
+            setAppData(null);
             setIsLoading(false);
-        }, []);
+            return;
+        }
 
-        const showAlert = useCallback((message) => {
-            setAlertInfo({ show: true, message });
-        }, []);
+        setIsLoading(true);
+        let dataPath;
+        if (currentUser.role === 'manager') {
+            dataPath = '/api/data/manager';
+        } else if (currentUser.role === 'counselor') {
+            dataPath = `/api/data/counselor/${currentUser.username}`;
+        } else { // client
+            dataPath = '/api/data/all';
+        }
 
-        const fetchData = useCallback(() => {
-            if(currentUser) {
-                setIsLoading(true);
-                // All roles fetch all data now, filtering happens on the frontend.
-                const dataPath = '/api/data/all';
-                fetch(dataPath)
-                    .then(res => res.ok ? res.json() : Promise.reject(new Error('Failed to fetch data')))
-                    .then(data => {
-                        setAppData(data);
-                    })
-                    .catch(error => {
-                        console.error("Failed to fetch data:", error);
-                        showAlert("加载数据失败。");
-                    })
-                    .finally(() => setIsLoading(false));
-            } else {
-                setAppData({ clients: [], counselors: [], appointments: [] });
-                setIsLoading(false);
-            }
-        }, [currentUser]);
+        try {
+            const res = await fetch(dataPath);
+            if (!res.ok) throw new Error('Failed to fetch data');
+            const data = await res.json();
+            setAppData(data);
+        } catch (error) {
+            console.error("Failed to fetch data:", error);
+            showAlert("加载数据失败。");
+        } finally {
+            setIsLoading(false);
+        }
+      }, [currentUser]);
+      
+      useEffect(() => {
+        fetchData();
+      }, [fetchData]);
 
-        useEffect(() => {
-            fetchData();
-        }, [fetchData]);
+      // Generic save function now routes based on role
+      const saveData = useCallback(async (dataToSave, isClientProfileUpdate = false) => {
+          if (!currentUser) return showAlert("请先登录。");
 
-        // *** CRITICAL FIX: Unified saveData logic ***
-        const saveData = useCallback(async (dataToSave, isClientProfileUpdate = false) => {
-            if (!currentUser) {
-                showAlert("请先登录。");
-                return;
-            }
+          let url, body;
+          if (currentUser.role === 'manager') {
+              url = '/api/data/manager';
+              body = JSON.stringify(dataToSave); // Manager saves the whole blob
+          } else if (currentUser.role === 'counselor') {
+              url = `/api/data/counselor/${currentUser.username}`;
+              body = JSON.stringify(dataToSave); // Counselor saves their perspective
+          } else if (currentUser.role === 'client' && isClientProfileUpdate) {
+              url = `/api/data/client/${currentUser.username}`;
+              body = JSON.stringify(dataToSave); // Client saves their profile
+          } else {
+              return showAlert("无权保存数据。");
+          }
 
-            let url, body;
+          try {
+              const response = await fetch(url, {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: body,
+              });
+              if (!response.ok) {
+                  const err = await response.json();
+                  throw new Error(err.message || "保存失败");
+              }
+              // No automatic fetchData here to allow for optimistic updates
+          } catch (error) {
+              console.error("Failed to save data:", error);
+              showAlert(`保存数据失败: ${error.message}`);
+          }
+      }, [currentUser]);
 
-            //来访者只更新自己的档案
-            if (isClientProfileUpdate && currentUser.role === 'client') {
-                url = `/api/data/client/${currentUser.username}`;
-                body = JSON.stringify(dataToSave); // Here, dataToSave is just the client object
-            } 
-            // 管理员和咨询师提交完整的应用数据
-            else if (currentUser.role === 'manager' || currentUser.role === 'counselor') {
-                url = `/api/data/all`;
-                // Here, dataToSave is the entire appData object {clients, counselors, appointments}
-                body = JSON.stringify(dataToSave); 
-            } 
-            else {
-                showAlert("无权保存数据。");
-                return;
-            }
-
-            try {
-                const response = await fetch(url, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: body,
-                });
-                if (!response.ok) {
-                    const err = await response.json();
-                    throw new Error(err.message || "保存失败");
-                }
-                // Optionally show a success message, but can be intrusive.
-                // showAlert('数据已保存。');
-            } catch (error) {
-                console.error("Failed to save data:", error);
-                showAlert(`保存数据失败: ${error.message}`);
-            }
-        }, [currentUser]);
-
-        const handleRegister = async (username, password, role) => {
-            try {
-                const response = await fetch('/api/register', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ username, password, role }),
-                });
-                const data = await response.json();
-                if(response.ok) {
-                    showAlert(data.message);
-                    const user = { username: data.username, role: data.role };
-                    localStorage.setItem('currentUser', JSON.stringify(user));
-                    setCurrentUser(user);
-                    return true;
-                } else {
-                    showAlert(data.message);
-                    return false;
-                }
-            } catch (error) {
-                showAlert('注册请求失败，请检查网络连接。');
-                return false;
-            }
-        };
-
-        const handleLogin = async (username, password, role) => {
-            // Hardcoded Manager Login
-            if (role === 'counselor' && username === 'Manager' && password === 'manager') {
-                showAlert('平台管理员登录成功！');
-                const user = { username: 'Manager', role: 'manager' };
+      const handleRegister = async (username, password, role) => {
+        try {
+            const response = await fetch('/api/register', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ username, password, role }),
+            });
+            const data = await response.json();
+            if (response.ok) {
+                showAlert(data.message);
+                const user = { username: data.username, role: data.role };
                 localStorage.setItem('currentUser', JSON.stringify(user));
                 setCurrentUser(user);
                 return true;
-            }
-            try {
-                const response = await fetch('/api/login', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ username, password, role }),
-                });
-                const data = await response.json();
-                if (response.ok) {
-                    showAlert(data.message);
-                    const user = { username: data.username, role: data.role };
-                    localStorage.setItem('currentUser', JSON.stringify(user));
-                    setCurrentUser(user);
-                    return true;
-                } else {
-                    showAlert(data.message);
-                    return false;
-                }
-            } catch(error) {
-                showAlert('登录请求失败，请检查网络连接。');
+            } else {
+                showAlert(data.message);
                 return false;
             }
-        };
-
-        const handleLogout = () => {
-            localStorage.removeItem('currentUser');
-            setCurrentUser(null);
+        } catch (error) {
+            showAlert('注册请求失败，请检查网络连接。');
+            return false;
         }
+      };
 
-        // --- All handlers that modify state and trigger save ---
-        const handleUpdateData = (newData) => {
-            const updatedData = { ...appData, ...newData };
-            setAppData(updatedData);
-            saveData(updatedData); // This now correctly calls the unified save endpoint
-        };
-
-        const handleUpdateClient = (updatedClientData, callback) => {
-            let newClientsState = [...appData.clients];
-            const clientIndex = newClientsState.findIndex(c => c.id === updatedClientData.id);
-            if (clientIndex > -1) {
-                newClientsState[clientIndex] = updatedClientData;
-            } else {
-                newClientsState.push(updatedClientData);
-            }
-            handleUpdateData({ ...appData, clients: newClientsState });
-            if (selectedClient?.id === updatedClientData.id || clientIndex === -1) {
-                setSelectedClient(updatedClientData);
-            }
-            if (callback) callback(updatedClientData);
-        };
-        
-        // This handler is used by the ClientPortal to save only their profile
-        const handleSaveClientProfile = (updatedProfile) => {
-            // The second argument `true` signals to `saveData` that this is a client self-update
-            saveData(updatedProfile, true); 
-            const updatedClients = appData.clients.map(c => c.username === currentUser.username ? updatedProfile : c);
-            setAppData({...appData, clients: updatedClients});
-            showAlert("您的信息已成功更新！");
-        };
-
-        const handleAddClient = (newClientData, clientToEdit) => {
-            if (clientToEdit) {
-                handleUpdateClient({ ...clientToEdit, ...newClientData });
-            } else {
-                const clientWithDefaults = {
-                    ...newClientData,
-                    id: `client-${Date.now()}`,
-                    username: newClientData.username,
-                    password: newClientData.password || '123456', // Default password for new clients
-                    sessions: [],
-                    joinDate: new Date().toISOString().split('T')[0],
-                    referredBy: newClientData.referredBy || null,
-                    referredClients: [],
-                };
-                handleUpdateClient(clientWithDefaults);
-            }
-        };
-
-        const handleDeleteClient = (clientId) => {
-            const clientToDelete = appData.clients.find(c => c.id === clientId);
-            if (!clientToDelete) return;
-            const updatedClients = appData.clients.filter(client => client.id !== clientId);
-            const updatedCounselors = appData.counselors.map(counselor => ({
-                ...counselor,
-                assignedClientIds: counselor.assignedClientIds.filter(id => id !== clientId)
-            }));
-            const updatedAppointments = appData.appointments.filter(appt => appt.clientId !== clientId);
-            handleUpdateData({
-                clients: updatedClients,
-                counselors: updatedCounselors,
-                appointments: updatedAppointments
+      const handleLogin = async (username, password, role) => {
+        try {
+            const response = await fetch('/api/login', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ username, password, role }),
             });
-            showAlert(`来访者 ${clientToDelete?.name} 已被删除。`);
-            if (selectedClient?.id === clientId) {
-                setSelectedClient(null);
-                setActiveSection('clientManagement');
-            }
-        };
-        
-        const handleUpdateCounselors = (updatedCounselors) => {
-             handleUpdateData({ ...appData, counselors: updatedCounselors });
-        };
-        
-        const handleDeleteCounselor = (counselorId) => {
-            if(appData.appointments.some(appt => appt.counselorId === counselorId)) {
-                showAlert('无法删除该咨询师，因为其仍有关联的日程安排。请先移除相关日程。');
-                return;
-            }
-            const updatedCounselors = appData.counselors.filter(c => c.id !== counselorId);
-            handleUpdateData({ ...appData, counselors: updatedCounselors });
-            showAlert('咨询师已删除。');
-        };
-
-        const handleUpdateAppointments = (appointmentData, isDelete = false) => {
-            let updatedAppointments;
-            if (isDelete) {
-                updatedAppointments = appData.appointments.filter(appt => appt.id !== appointmentData.id);
+            const data = await response.json();
+            if (response.ok) {
+                showAlert(data.message);
+                const user = { username: data.username, role: data.role };
+                localStorage.setItem('currentUser', JSON.stringify(user));
+                setCurrentUser(user);
+                return true;
             } else {
-                const existingIndex = appData.appointments.findIndex(appt => appt.id === appointmentData.id);
-                if (existingIndex > -1) {
-                    updatedAppointments = [...appData.appointments];
-                    updatedAppointments[existingIndex] = appointmentData;
-                } else {
-                    updatedAppointments = [...appData.appointments, {...appointmentData, id: `appt-${Date.now()}`}];
-                }
+                showAlert(data.message);
+                return false;
             }
-            handleUpdateData({ ...appData, appointments: updatedAppointments });
-        };
-
-        const handleAssignClients = (selectedClientIds) => {
-            const currentCounselor = appData.counselors.find(c => c.username === currentUser.username);
-            if (!currentCounselor) return;
-            const updatedCounselor = {
-                ...currentCounselor,
-                assignedClientIds: [...new Set([...currentCounselor.assignedClientIds, ...selectedClientIds])]
-            };
-            const updatedCounselors = appData.counselors.map(c => c.id === updatedCounselor.id ? updatedCounselor : c);
-            handleUpdateCounselors(updatedCounselors);
-            setAssignClientModalOpen(false);
-            showAlert('成功分配来访者！');
-        };
-
-        const handleSelectClient = (client) => {
-            setSelectedClient(client);
-            setActiveSection('clientDetail');
-        };
-        
-        const navItems = [
-            { id: 'clientManagement', label: '来访者管理', icon: '👥' },
-            { id: 'counselorManagement', label: '咨询师管理', icon: '🧑‍🏫' },
-            { id: 'schedule', label: '咨询日程', icon: '🗓️' },
-            { id: 'cbtApplication', label: '辅助工具', icon: '🧠' }
-        ];
-
-        // --- RENDER LOGIC ---
-        if (isLoading && !currentUser) {
-            return <div className="min-h-screen flex items-center justify-center">正在加载...</div>
+        } catch(error) {
+            showAlert('登录请求失败，请检查网络连接。');
+            return false;
         }
+      };
+      
+      const handleLogout = () => {
+          localStorage.removeItem('currentUser');
+          setCurrentUser(null);
+          setAppData(null);
+      }
+      
+      const renderPortal = () => {
+          if (isLoading || (currentUser && !appData)) {
+              return <div className="min-h-screen flex items-center justify-center">正在加载...</div>
+          }
+          if (!currentUser) {
+              return <AuthModal onLogin={handleLogin} onRegister={handleRegister} showAlert={showAlert} />;
+          }
+          switch (currentUser.role) {
+              case 'manager':
+                  return <ManagerPortal user={currentUser} allData={appData} setAllData={setAppData} onSave={saveData} onLogout={handleLogout} showAlert={showAlert} globalLoadingMessage={globalLoadingMessage} setGlobalLoadingMessage={setGlobalLoadingMessage} />;
+              case 'counselor':
+                  return <CounselorPortal user={currentUser} initialData={appData} onLogout={handleLogout} showAlert={showAlert} globalLoadingMessage={globalLoadingMessage} setGlobalLoadingMessage={setGlobalLoadingMessage} fetchData={fetchData} />;
+              case 'client':
+                  return <ClientPortal user={currentUser} allData={appData} onLogout={handleLogout} onSave={saveData} showAlert={showAlert} />;
+              default:
+                  return <div className="min-h-screen flex items-center justify-center">无法识别的用户角色。</div>;
+          }
+      };
 
-        if (!currentUser) {
-            return <AuthModal onLogin={handleLogin} onRegister={handleRegister} showAlert={showAlert} />;
-        }
-
-        if (currentUser.role === 'client') {
-            return <ClientPortal user={currentUser} allData={appData} onLogout={handleLogout} onSaveProfile={handleSaveClientProfile} showAlert={showAlert} />;
-        }
-
-        // --- Manager & Counselor Portal Logic ---
-        const isManager = currentUser.role === 'manager';
-        const currentCounselorProfile = isManager ? null : appData.counselors.find(c => c.username === currentUser.username);
-
-        const renderPortal = (isManagerView) => {
-            let clientsForView, counselorsForView;
-            if (isManagerView) {
-                clientsForView = appData.clients;
-                counselorsForView = appData.counselors;
-            } else { // Counselor View
-                if(!currentCounselorProfile) {
-                    return <div className="p-10 text-center">无法加载您的咨询师信息...</div>;
-                }
-                clientsForView = appData.clients.filter(c => currentCounselorProfile.assignedClientIds?.includes(c.id));
-                counselorsForView = appData.counselors; // Pass all to be filtered inside component
-            }
-
-            const renderSection = () => {
-                if(isLoading && !appData.counselors.length) { // Added a check here
-                    return <div className="text-center p-10 text-gray-600 font-semibold">正在加载...</div>;
-                }
-                switch(activeSection) {
-                    case 'clientManagement':
-                        return <ClientManagementSection
-                                    clients={clientsForView}
-                                    onAddClient={handleAddClient}
-                                    onSelectClient={handleSelectClient}
-                                    isManager={isManagerView}
-                                    onAssignClientClick={() => setAssignClientModalOpen(true)}
-                                />;
-                    case 'counselorManagement':
-                        return <CounselorManagementSection
-                                    counselors={counselorsForView}
-                                    clients={appData.clients}
-                                    appointments={appData.appointments}
-                                    onUpdateCounselors={handleUpdateCounselors}
-                                    onDeleteCounselor={handleDeleteCounselor}
-                                    isManager={isManagerView}
-                                    currentUserProfile={currentCounselorProfile}
-                                />;
-                    case 'schedule':
-                        return <ScheduleSection
-                                    appointments={appData.appointments}
-                                    clients={appData.clients}
-                                    counselors={appData.counselors}
-                                    onUpdateAppointments={handleUpdateAppointments}
-                                />;
-                    case 'clientDetail':
-                        return selectedClient ?
-                                <ClientDetailView
-                                    key={selectedClient.id + JSON.stringify(selectedClient.sessions)}
-                                    client={selectedClient}
-                                    allClients={appData.clients}
-                                    onUpdateClient={handleUpdateClient}
-                                    onDeleteClient={handleDeleteClient}
-                                    globalLoadingMessage={globalLoadingMessage}
-                                    setGlobalLoadingMessage={setGlobalLoadingMessage}
-                                    showAlert={showAlert}
-                                    isManager={isManagerView}
-                                /> :
-                                <div className="text-center p-10 text-gray-500">请先从“来访者管理”页面选择一位来访者。</div>;
-                    case 'cbtApplication':
-                         return <CBTSection showAlert={showAlert}/>;
-                    default:
-                        return <ScheduleSection
-                                    appointments={appData.appointments}
-                                    clients={appData.clients}
-                                    counselors={appData.counselors}
-                                    onUpdateAppointments={handleUpdateAppointments}
-                                />;
-                }
-            };
-            
-            const assignedCounselors = appData.counselors.flatMap(c => c.assignedClientIds || []);
-            const unassignedClients = appData.clients.filter(c => !assignedCounselors.includes(c.id));
-
-            return (
-                <div className="min-h-screen bg-gray-50 flex flex-col">
-                    {alertInfo.show && (
-                        <div className="custom-modal-backdrop animate-fadeIn" onClick={() => setAlertInfo({ show: false, message: '' })}>
-                            <div className="custom-modal-content" onClick={(e) => e.stopPropagation()}>
-                                <p className="text-gray-800">{alertInfo.message}</p>
-                                <button className="custom-modal-button" onClick={() => setAlertInfo({ show: false, message: '' })}>关闭</button>
-                            </div>
-                        </div>
-                    )}
-                     {isAssignClientModalOpen && (
-                        <AssignClientModal
-                            unassignedClients={unassignedClients}
-                            onClose={() => setAssignClientModalOpen(false)}
-                            onAssign={handleAssignClients}
-                        />
-                    )}
-                    <header className="bg-white shadow-sm sticky top-0 z-40">
-                        <div className="container mx-auto px-4">
-                            <div className="flex items-center justify-between h-16">
-                                <button onClick={() => setActiveSection('schedule')} className="flex items-center cursor-pointer">
-                                    <span className="text-2xl mr-3">💌</span>
-                                    <h1 className="text-xl font-bold text-gray-800">{isManagerView ? '平台管理后台' : '咨询师工作台'}</h1>
-                                </button>
-                                <div className="flex items-center gap-4">
-                                    <nav className="hidden md:flex items-center space-x-1">
-                                        {navItems.map(item => (
-                                            <button
-                                                key={item.id}
-                                                onClick={()=>setActiveSection(item.id)}
-                                                className={`px-3 py-2 rounded-md text-sm font-medium flex items-center transition-colors duration-200 ${activeSection === item.id || (activeSection === 'clientDetail' && item.id === 'clientManagement') ? 'bg-blue-50 text-blue-600' : 'text-gray-500 hover:bg-gray-100'}`}
-                                            >
-                                                <span className="mr-2">{item.icon}</span>{item.label}
-                                            </button>
-                                        ))}
-                                    </nav>
-                                    <div className="border-l pl-4 flex items-center gap-2">
-                                        <span className="text-sm text-gray-500 hidden lg:inline">{currentUser.username}</span>
-                                        <button onClick={handleLogout} className="text-sm font-medium text-gray-500 hover:text-red-600">登出</button>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                    </header>
-                    {globalLoadingMessage && (
-                        <div className="bg-yellow-100 text-yellow-800 text-center p-2 animate-pulse flex items-center justify-center sticky top-16 z-30">
-                            <span className="mr-2">⏳</span>{globalLoadingMessage}
-                        </div>
-                    )}
-                    <main className="flex-grow container mx-auto p-4 sm:p-6 lg:p-8">
-                        {renderSection()}
-                    </main>
+      return (
+          <>
+            {alertInfo.show && (
+              <div className="custom-modal-backdrop animate-fadeIn" onClick={() => setAlertInfo({ show: false, message: '' })}>
+                <div className="custom-modal-content" onClick={(e) => e.stopPropagation()}>
+                  <p className="text-gray-800">{alertInfo.message}</p>
+                  <button className="custom-modal-button" onClick={() => setAlertInfo({ show: false, message: '' })}>关闭</button>
                 </div>
-            );
-        }
-
-        return isManager ? renderPortal(true) : renderPortal(false);
-    };
-
-    // --- All Components (No changes below this line for this fix) ---
-
-    // AssignClientModal
-    const AssignClientModal = ({ unassignedClients, onClose, onAssign }) => {
-        const { useState } = React;
-        const [selectedIds, setSelectedIds] = useState([]);
-
-        const handleToggle = (clientId) => {
-            setSelectedIds(prev =>
-                prev.includes(clientId) ? prev.filter(id => id !== clientId) : [...prev, clientId]
-            );
-        };
-        
-        const handleSubmit = () => {
-            if (selectedIds.length > 0) {
-                onAssign(selectedIds);
-            }
-        };
-
-        return (
-            <div className="custom-modal-backdrop">
-                <div className="custom-modal-content" style={{textAlign: 'left', width: '500px'}}>
-                    <h3 className="text-xl font-semibold text-gray-800 mb-4">分配来访者</h3>
-                    <p className="text-sm text-gray-500 mb-4">请从未分配的来访者列表中选择，将其添加到您的负责列表。</p>
-                    <div className="max-h-64 overflow-y-auto border rounded-lg p-2 space-y-2">
-                        {unassignedClients.length > 0 ? unassignedClients.map(client => (
-                            <div key={client.id} onClick={() => handleToggle(client.id)} className={`p-2 rounded-md cursor-pointer flex items-center gap-3 transition-colors ${selectedIds.includes(client.id) ? 'bg-blue-100' : 'hover:bg-gray-100'}`}>
-                                <input type="checkbox" checked={selectedIds.includes(client.id)} readOnly className="pointer-events-none"/>
-                                <span>{client.name} (ID: ...{client.id.slice(-4)})</span>
-                            </div>
-                        )) : <p className="text-center text-gray-400 p-4">没有未分配的来访者。</p>}
-                    </div>
-                    <div className="flex justify-end gap-3 mt-6">
-                        <button onClick={onClose} className="px-4 py-2 bg-gray-200 hover:bg-gray-300 rounded-md border">取消</button>
-                        <button onClick={handleSubmit} disabled={selectedIds.length === 0} className="px-4 py-2 text-white bg-blue-600 hover:bg-blue-700 rounded-md shadow-sm disabled:opacity-50">
-                            确认分配 ({selectedIds.length})
-                        </button>
-                    </div>
-                </div>
-            </div>
-        );
+              </div>
+            )}
+            {renderPortal()}
+          </>
+      );
     };
     
+    // --- All Components ---
+
     const AuthModal = ({ onLogin, onRegister, showAlert }) => {
         const { useState } = React;
         const [mode, setMode] = useState('login');
@@ -510,70 +237,242 @@
         const handleSubmit = async (e) => {
             e.preventDefault();
             if (!username || !password) { showAlert('请输入用户名和密码。'); return; }
+
             if (mode === 'register') {
-                if (password.length < 6) { showAlert('密码必须至少为6个字符。'); return; }
-                if(password !== confirmPassword) { showAlert('两次输入的密码不匹配！'); return; }
-                await onRegister(username, password, role);
+              if (password.length < 6) { showAlert('密码必须至少为6个字符。'); return; }
+              if (password !== confirmPassword) { showAlert('两次输入的密码不匹配！'); return; }
+              await onRegister(username, password, role);
             } else {
-                await onLogin(username, password, role);
+              await onLogin(username, password, role);
             }
         };
-
+        
         return (
             <div className="min-h-screen bg-gray-100 flex items-center justify-center p-4">
                 <div className="w-full max-w-md bg-white rounded-lg shadow-xl p-8 animate-fadeIn">
                     <h2 className="text-2xl font-bold text-center text-gray-800 mb-4">{mode === 'login' ? '登录' : '注册'}</h2>
+                    
                     <div className="flex justify-center mb-6">
                         <div className="bg-gray-200 p-1 rounded-full flex">
-                            <button onClick={() => setRole('counselor')} className={`px-4 py-1 text-sm font-semibold rounded-full ${role === 'counselor' ? 'bg-blue-600 text-white' : 'text-gray-600'}`}>咨询师</button>
+                            <button onClick={() => setRole('counselor')} className={`px-4 py-1 text-sm font-semibold rounded-full ${role === 'counselor' ? 'bg-blue-600 text-white' : 'text-gray-600'}`}>咨询师/管理</button>
                             <button onClick={() => setRole('client')} className={`px-4 py-1 text-sm font-semibold rounded-full ${role === 'client' ? 'bg-blue-600 text-white' : 'text-gray-600'}`}>来访者</button>
                         </div>
                     </div>
+
                     <form onSubmit={handleSubmit} className="space-y-4">
                         <div><label className="text-sm font-medium text-gray-700">用户名</label><input type="text" value={username} onChange={e => setUsername(e.target.value)} className="w-full p-2 mt-1 border rounded-md" required /></div>
                         <div><label className="text-sm font-medium text-gray-700">密码</label><input type="password" value={password} onChange={e => setPassword(e.target.value)} className="w-full p-2 mt-1 border rounded-md" required /></div>
                         {mode === 'register' && (
-                            <div><label className="text-sm font-medium text-gray-700">确认密码</label><input type="password" value={confirmPassword} onChange={e => setConfirmPassword(e.target.value)} className="w-full p-2 mt-1 border rounded-md" required /></div>
+                          <div><label className="text-sm font-medium text-gray-700">确认密码</label><input type="password" value={confirmPassword} onChange={e => setConfirmPassword(e.target.value)} className="w-full p-2 mt-1 border rounded-md" required/></div>
                         )}
                         <button type="submit" className="w-full bg-blue-600 text-white py-2 rounded-md hover:bg-blue-700 font-semibold">{mode === 'login' ? '登录' : '注册'}</button>
                     </form>
+
                     <p className="text-xs text-center text-gray-500 mt-4">
-                        {mode === 'login' ? '没有账户？' : '已有账户？'}
-                        <button onClick={() => setMode(mode === 'login' ? 'register' : 'login')} className="text-blue-600 hover:underline ml-1">
-                            {mode === 'login' ? '点击注册' : '返回登录'}
-                        </button>
+                      {mode === 'login' ? '没有账户？' : '已有账户？'}
+                      <button onClick={() => setMode(mode === 'login' ? 'register' : 'login')} className="text-blue-600 hover:underline ml-1">
+                        {mode === 'login' ? '点击注册' : '返回登录'}
+                      </button>
                     </p>
                 </div>
             </div>
         );
     };
+    
+    // ================================================================================================
+    // =================================== MANAGER PORTAL START =======================================
+    // ================================================================================================
+    const ManagerPortal = ({ user, allData, setAllData, onSave, onLogout, showAlert, globalLoadingMessage, setGlobalLoadingMessage }) => {
+        const { useState } = React;
+        const [activeSection, setActiveSection] = useState('counselorManagement');
+        const [selectedClient, setSelectedClient] = useState(null);
 
-    const ClientPortal = ({ user, allData, onLogout, onSaveProfile, showAlert }) => {
+        const handleUpdateData = (newData) => {
+            setAllData(newData);
+            onSave(newData);
+        };
+
+        const handleUpdateClient = (updatedClientData) => {
+            const newCounselorData = { ...allData.counselor_data };
+            const clientIndex = newCounselorData.clients.findIndex(c => c.id === updatedClientData.id);
+            if (clientIndex > -1) {
+                newCounselorData.clients[clientIndex] = updatedClientData;
+            } else {
+                newCounselorData.clients.push(updatedClientData);
+            }
+            handleUpdateData({ ...allData, counselor_data: newCounselorData });
+        };
+        
+        const handleDeleteClient = (clientId) => {
+            const clientToDelete = allData.counselor_data.clients.find(c => c.id === clientId);
+            if (!clientToDelete) return;
+
+            const updatedCounselorData = { ...allData.counselor_data };
+            updatedCounselorData.clients = updatedCounselorData.clients.filter(c => c.id !== clientId);
+            updatedCounselorData.counselors = updatedCounselorData.counselors.map(c => ({
+                ...c, assignedClientIds: c.assignedClientIds.filter(id => id !== clientId)
+            }));
+            updatedCounselorData.appointments = updatedCounselorData.appointments.filter(a => a.clientId !== clientId);
+
+            const updatedUsers = { ...allData.users };
+            if (clientToDelete.username) {
+                delete updatedUsers[clientToDelete.username];
+            }
+            
+            handleUpdateData({ users: updatedUsers, counselor_data: updatedCounselorData });
+            showAlert(`来访者 ${clientToDelete.name} 已被删除。`);
+            if (selectedClient?.id === clientId) setSelectedClient(null);
+        };
+
+        const handleUpdateCounselors = (updatedCounselors) => {
+            handleUpdateData({ ...allData, counselor_data: { ...allData.counselor_data, counselors: updatedCounselors } });
+        };
+
+        const handleDeleteCounselor = (counselorId) => {
+            const counselorToDelete = allData.counselor_data.counselors.find(c => c.id === counselorId);
+            if(!counselorToDelete) return;
+            if (allData.counselor_data.appointments.some(a => a.counselorId === counselorId)) {
+                return showAlert('无法删除该咨询师，其仍有关联的日程安排。');
+            }
+            const updatedCounselors = allData.counselor_data.counselors.filter(c => c.id !== counselorId);
+            const updatedUsers = { ...allData.users };
+            if (counselorToDelete.username) {
+                delete updatedUsers[counselorToDelete.username];
+            }
+            handleUpdateData({ users: updatedUsers, counselor_data: { ...allData.counselor_data, counselors: updatedCounselors } });
+            showAlert('咨询师已删除。');
+        };
+
+        const handleUpdateAppointments = (appointmentData, isDelete = false) => {
+            let updatedAppointments;
+            if (isDelete) {
+                updatedAppointments = allData.counselor_data.appointments.filter(a => a.id !== appointmentData.id);
+            } else {
+                const index = allData.counselor_data.appointments.findIndex(a => a.id === appointmentData.id);
+                updatedAppointments = [...allData.counselor_data.appointments];
+                if (index > -1) updatedAppointments[index] = appointmentData;
+                else updatedAppointments.push({ ...appointmentData, id: `appt-${Date.now()}` });
+            }
+            handleUpdateData({ ...allData, counselor_data: { ...allData.counselor_data, appointments: updatedAppointments } });
+        };
+        
+        const handleSaveUser = (username, password, role, isNew = false) => {
+            const updatedUsers = { ...allData.users };
+            if(updatedUsers[username] && isNew) return showAlert('用户名已存在');
+            updatedUsers[username] = { password, role };
+            handleUpdateData({ ...allData, users: updatedUsers });
+        };
+
+        const navItems = [
+            { id: 'counselorManagement', label: '咨询师管理', icon: '🧑‍🏫' },
+            { id: 'clientManagement', label: '来访者管理', icon: '👥' },
+            { id: 'schedule', label: '咨询日程', icon: '🗓️' },
+        ];
+        
+        const renderSection = () => {
+            const { users, counselor_data } = allData;
+            switch(activeSection) {
+                case 'counselorManagement':
+                    return <CounselorManagementSection 
+                                isManagerView={true} 
+                                counselors={counselor_data.counselors} 
+                                clients={counselor_data.clients} 
+                                appointments={counselor_data.appointments}
+                                users={users}
+                                onUpdateCounselors={handleUpdateCounselors}
+                                onDeleteCounselor={handleDeleteCounselor}
+                                onSaveUser={handleSaveUser}
+                            />;
+                case 'clientManagement':
+                    return <ClientManagementSection 
+                                isManagerView={true}
+                                clients={counselor_data.clients}
+                                users={users}
+                                onSelectClient={setSelectedClient}
+                                onSaveUser={handleSaveUser}
+                                onUpdateClient={handleUpdateClient}
+                                onDeleteClient={handleDeleteClient}
+                                onClientDetailBack={() => setSelectedClient(null)}
+                                selectedClient={selectedClient}
+                                setGlobalLoadingMessage={setGlobalLoadingMessage}
+                                showAlert={showAlert}
+                            />;
+                case 'schedule':
+                     return <ScheduleSection 
+                                appointments={counselor_data.appointments} 
+                                clients={counselor_data.clients} 
+                                counselors={counselor_data.counselors} 
+                                onUpdateAppointments={handleUpdateAppointments} 
+                            />;
+                default: return <div/>;
+            }
+        };
+
+        return (
+            <div className="min-h-screen bg-gray-50 flex flex-col">
+                <header className="bg-white shadow-sm sticky top-0 z-40">
+                    <div className="container mx-auto px-4">
+                        <div className="flex items-center justify-between h-16">
+                            <h1 className="text-xl font-bold text-gray-800">平台管理</h1>
+                            <div className="flex items-center gap-4">
+                                <nav className="hidden md:flex items-center space-x-1">
+                                    {navItems.map(item => (
+                                        <button key={item.id} onClick={() => setActiveSection(item.id)}
+                                            className={`px-3 py-2 rounded-md text-sm font-medium flex items-center transition-colors duration-200 ${activeSection === item.id ? 'bg-blue-50 text-blue-600' : 'text-gray-500 hover:bg-gray-100'}`}>
+                                            <span className="mr-2">{item.icon}</span>{item.label}
+                                        </button>
+                                    ))}
+                                </nav>
+                                <div className="border-l pl-4 flex items-center gap-2">
+                                    <span className="text-sm text-gray-500 hidden lg:inline">{user.username}</span>
+                                    <button onClick={onLogout} className="text-sm font-medium text-gray-500 hover:text-red-600">登出</button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </header>
+                {globalLoadingMessage && (<div className="bg-yellow-100 text-yellow-800 text-center p-2 animate-pulse flex items-center justify-center sticky top-16 z-30"><span className="mr-2">⏳</span>{globalLoadingMessage}</div>)}
+                <main className="flex-grow container mx-auto p-4 sm:p-6 lg:p-8">{renderSection()}</main>
+            </div>
+        );
+    };
+
+
+    // ================================================================================================
+    // =================================== CLIENT PORTAL START ========================================
+    // ================================================================================================
+    const ClientPortal = ({ user, allData, onLogout, onSave, showAlert }) => {
         const { useState, useMemo, useEffect } = React;
         const [isEditing, setIsEditing] = useState(false);
         const [clientProfile, setClientProfile] = useState(null);
 
         useEffect(() => {
-            const profile = allData.clients.find(c => c.username === user.username);
-            setClientProfile(profile);
-        }, [allData.clients, user.username]);
+            if (allData && allData.clients) {
+                const profile = allData.clients.find(c => c.username === user.username);
+                setClientProfile(profile);
+            }
+        }, [allData, user.username]);
 
-        const assignedCounselor = clientProfile ? allData.counselors.find(c => c.assignedClientIds?.includes(clientProfile.id)) : null;
-        const clientAppointments = clientProfile ? allData.appointments.filter(a => a.clientId === clientProfile.id) : [];
+        const assignedCounselor = clientProfile && allData.counselors ? allData.counselors.find(c => c.assignedClientIds?.includes(clientProfile.id)) : null;
+        const clientAppointments = clientProfile && allData.appointments ? allData.appointments.filter(a => a.clientId === clientProfile.id) : [];
 
         const { totalHours, monthlyHours } = useMemo(() => {
             if (!clientAppointments) return { totalHours: 0, monthlyHours: 0 };
+            
             const now = new Date();
             const oneMonthAgo = new Date(now.getFullYear(), now.getMonth() - 1, now.getDate());
+
             const total = clientAppointments.length;
             const monthly = clientAppointments.filter(a => new Date(a.date) >= oneMonthAgo).length;
+            
             return { totalHours: total, monthlyHours: monthly };
         }, [clientAppointments]);
-
-        const handleSave = (updatedProfile) => {
-            onSaveProfile(updatedProfile);
+        
+        const handleSaveProfile = (updatedProfile) => {
+            onSave(updatedProfile, true); // true indicates it's a client profile update
             setClientProfile(updatedProfile);
             setIsEditing(false);
+            showAlert("您的信息已成功更新！");
         };
 
         if (!clientProfile) {
@@ -582,115 +481,279 @@
 
         return (
             <div className="min-h-screen bg-gray-50 flex flex-col">
-                <header className="bg-white shadow-sm sticky top-0 z-40">
-                    <div className="container mx-auto px-4">
-                        <div className="flex items-center justify-between h-16">
-                            <h1 className="text-xl font-bold text-gray-800">来访者门户</h1>
-                            <div className="flex items-center gap-2">
-                                <span className="text-sm text-gray-500">{user.username}</span>
-                                <button onClick={onLogout} className="text-sm font-medium text-red-600 hover:underline">登出</button>
-                            </div>
+              <header className="bg-white shadow-sm sticky top-0 z-40">
+                <div className="container mx-auto px-4">
+                  <div className="flex items-center justify-between h-16">
+                    <h1 className="text-xl font-bold text-gray-800">来访者门户</h1>
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm text-gray-500">{user.username}</span>
+                      <button onClick={onLogout} className="text-sm font-medium text-red-600 hover:underline">登出</button>
+                    </div>
+                  </div>
+                </div>
+              </header>
+              <main className="flex-grow container mx-auto p-4 sm:p-6 lg:p-8 space-y-8">
+                {isEditing ? (
+                    <ClientForm 
+                        clientToEdit={clientProfile}
+                        onSave={handleSaveProfile}
+                        onCancel={() => setIsEditing(false)}
+                        allClients={allData.clients}
+                        isManagerView={false}
+                    />
+                ) : (
+                    <>
+                    <div className="bg-white p-6 rounded-lg shadow-md">
+                        <div className="flex justify-between items-center mb-4 border-b pb-3">
+                            <h2 className="text-xl font-semibold text-gray-700">我的信息</h2>
+                            <button onClick={() => setIsEditing(true)} className="text-sm font-medium text-blue-600 hover:underline">编辑</button>
+                        </div>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm">
+                           <p><strong>姓名:</strong> {clientProfile.name}</p>
+                           <p><strong>年龄:</strong> {clientProfile.age}</p>
+                           <p><strong>性别:</strong> {clientProfile.gender}</p>
+                           <p><strong>联系方式:</strong> {clientProfile.contact}</p>
+                           <p className="sm:col-span-2"><strong>职业/年级:</strong> {clientProfile.grade || '未提供'}</p>
+                           <p><strong>性取向:</strong> {clientProfile.sexualOrientation || '未提供'}</p>
+                           <p><strong>心理状态评分:</strong> {clientProfile.mentalStateScore}/10</p>
+                           <p className="sm:col-span-2"><strong>既往病史:</strong> {clientProfile.historyOfIllness || '未提供'}</p>
+                           <p className="sm:col-span-2"><strong>残障情况:</strong> {clientProfile.disabilityStatus || '未提供'}</p>
+                           <p><strong>宗教信仰:</strong> {clientProfile.religiousBelief || '未提供'}</p>
+                           <p><strong>种族认同:</strong> {clientProfile.ethnicIdentity || '未提供'}</p>
+                           <p><strong>个人经济:</strong> {clientProfile.personalFinance || '未提供'}</p>
+                           <p><strong>家庭经济:</strong> {clientProfile.familyFinance || '未提供'}</p>
                         </div>
                     </div>
-                </header>
-                <main className="flex-grow container mx-auto p-4 sm:p-6 lg:p-8 space-y-8">
-                    {isEditing ? (
-                        <ClientForm clientToEdit={clientProfile} onSave={handleSave} onCancel={() => setIsEditing(false)} allClients={allData.clients} isManager={false} />
-                    ) : (
-                        <>
-                            <div className="bg-white p-6 rounded-lg shadow-md">
-                                <div className="flex justify-between items-center mb-4 border-b pb-3">
-                                    <h2 className="text-xl font-semibold text-gray-700">我的信息</h2>
-                                    <button onClick={() => setIsEditing(true)} className="text-sm font-medium text-blue-600 hover:underline">编辑</button>
+
+                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                        <div className="bg-white p-6 rounded-lg shadow-md">
+                           <h2 className="text-xl font-semibold text-gray-700 mb-4 border-b pb-3">我的咨询师</h2>
+                            {assignedCounselor ? (
+                                <div>
+                                   <h3 className="text-lg font-bold text-blue-700">{assignedCounselor.name}</h3>
+                                   <p className="text-sm text-gray-600 mt-1">{assignedCounselor.modality}</p>
                                 </div>
-                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm">
-                                    <p><strong>姓名:</strong> {clientProfile.name}</p>
-                                    <p><strong>年龄:</strong> {clientProfile.age}</p>
-                                    <p><strong>性别:</strong> {clientProfile.gender}</p>
-                                    <p><strong>联系方式:</strong> {clientProfile.contact}</p>
-                                    <p className="sm:col-span-2"><strong>职业/年级:</strong> {clientProfile.grade || '未提供'}</p>
-                                    <p><strong>性取向:</strong> {clientProfile.sexualOrientation || '未提供'}</p>
-                                    <p><strong>心理状态评分:</strong> {clientProfile.mentalStateScore}/10</p>
-                                    <p className="sm:col-span-2"><strong>既往病史:</strong> {clientProfile.historyOfIllness || '未提供'}</p>
-                                    <p className="sm:col-span-2"><strong>残障情况:</strong> {clientProfile.disabilityStatus || '未提供'}</p>
-                                    <p><strong>宗教信仰:</strong> {clientProfile.religiousBelief || '未提供'}</p>
-                                    <p><strong>种族认同:</strong> {clientProfile.ethnicIdentity || '未提供'}</p>
-                                    <p><strong>个人经济:</strong> {clientProfile.personalFinance || '未提供'}</p>
-                                    <p><strong>家庭经济:</strong> {clientProfile.familyFinance || '未提供'}</p>
-                                </div>
-                            </div>
-                            <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-                                <div className="bg-white p-6 rounded-lg shadow-md">
-                                    <h2 className="text-xl font-semibold text-gray-700 mb-4 border-b pb-3">我的咨询师</h2>
-                                    {assignedCounselor ? (
-                                        <div>
-                                            <h3 className="text-lg font-bold text-blue-700">{assignedCounselor.name}</h3>
-                                            <p className="text-sm text-gray-600 mt-1">{assignedCounselor.modality}</p>
-                                            <p className="text-sm text-gray-500 mt-2">{assignedCounselor.email}</p>
-                                        </div>
-                                    ) : <p className="text-gray-500">您目前未分配咨询师。</p>}
-                                </div>
-                                <div className="bg-white p-6 rounded-lg shadow-md">
-                                    <h2 className="text-xl font-semibold text-gray-700 mb-4 border-b pb-3">咨询统计</h2>
-                                    <div className="space-y-3">
-                                        <p><strong>总咨询时长:</strong> {totalHours} 小时</p>
-                                        <p><strong>近一个月咨询时长:</strong> {monthlyHours} 小时</p>
+                            ) : <p className="text-gray-500">您目前未分配咨询师。</p>}
+                        </div>
+
+                         <div className="bg-white p-6 rounded-lg shadow-md">
+                           <h2 className="text-xl font-semibold text-gray-700 mb-4 border-b pb-3">咨询统计</h2>
+                           <div className="space-y-3">
+                                <p><strong>总咨询时长:</strong> {totalHours} 小时</p>
+                                <p><strong>近一个月咨询时长:</strong> {monthlyHours} 小时</p>
+                           </div>
+                        </div>
+                    </div>
+
+                    <div className="bg-white p-6 rounded-lg shadow-md">
+                        <h2 className="text-xl font-semibold text-gray-700 mb-4 border-b pb-3">我的日历</h2>
+                        <div className="space-y-3">
+                            {clientAppointments.length > 0 ? (
+                                clientAppointments.sort((a, b) => new Date(a.date) - new Date(b.date)).map(appt => (
+                                    <div key={appt.id} className="bg-blue-50 border-l-4 border-blue-500 p-3 rounded-r-lg">
+                                        <p className="font-bold text-blue-800">{appt.date} - {appt.time}</p>
+                                        <p className="text-sm text-gray-600">与 {allData.counselors.find(c => c.id === appt.counselorId)?.name || '咨询师'} 的咨询</p>
+                                        {appt.location && <p className="text-xs text-gray-500">地点: {appt.location}</p>}
                                     </div>
-                                </div>
-                            </div>
-                            <div className="bg-white p-6 rounded-lg shadow-md">
-                                <h2 className="text-xl font-semibold text-gray-700 mb-4 border-b pb-3">我的日历</h2>
-                                <div className="space-y-3">
-                                    {clientAppointments.length > 0 ? (
-                                        clientAppointments.sort((a, b) => new Date(a.date) - new Date(b.date)).map(appt => (
-                                            <div key={appt.id} className="bg-blue-50 border-l-4 border-blue-500 p-3 rounded-r-lg">
-                                                <p className="font-bold text-blue-800">{appt.date} - {appt.time}</p>
-                                                <p className="text-sm text-gray-600">与 {allData.counselors.find(c => c.id === appt.counselorId)?.name || '咨询师'} 的咨询</p>
-                                                {appt.location && <p className="text-xs text-gray-500">地点: {appt.location}</p>}
-                                            </div>
-                                        ))
-                                    ) : (
-                                        <p className="text-gray-500 text-center py-4">您目前没有已安排的咨询。</p>
-                                    )}
-                                </div>
-                            </div>
-                        </>
-                    )}
-                </main>
+                                ))
+                            ) : (
+                                <p className="text-gray-500 text-center py-4">您目前没有已安排的咨询。</p>
+                            )}
+                        </div>
+                    </div>
+                  </>
+                )}
+              </main>
             </div>
         );
     }
-    
-    const CounselorManagementSection = ({ counselors, clients, appointments, onUpdateCounselors, onDeleteCounselor, isManager, currentUserProfile }) => {
+
+
+    // ================================================================================================
+    // ================================== COUNSELOR PORTAL START ======================================
+    // ================================================================================================
+     const CounselorPortal = ({ user, initialData, onLogout, showAlert, globalLoadingMessage, setGlobalLoadingMessage, fetchData }) => {
+        const { useState, useEffect, useCallback } = React;
+        const [activeSection, setActiveSection] = useState('schedule');
+        const [selectedClient, setSelectedClient] = useState(null);
+        
+        // This portal manages its own data, fetched based on the counselor's context
+        const [counselorData, setCounselorData] = useState(initialData);
+        useEffect(() => { setCounselorData(initialData) }, [initialData]);
+
+        const handleUpdateClient = (updatedClientData, callback) => {
+            const newClients = [...counselorData.assigned_clients];
+            const clientIndex = newClients.findIndex(c => c.id === updatedClientData.id);
+
+            if (clientIndex > -1) {
+                newClients[clientIndex] = updatedClientData;
+                const fullDataToSave = {
+                    clients: newClients,
+                    appointments: counselorData.appointments,
+                };
+                
+                // Optimistic update
+                setCounselorData(prev => ({...prev, assigned_clients: newClients}));
+                setSelectedClient(updatedClientData);
+
+                // Persist change
+                // Note: this save pattern is simplified. It sends only client and appt data.
+                // A more robust pattern would involve more granular API endpoints.
+                fetch(`/api/data/counselor/${user.username}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(fullDataToSave),
+                })
+                .then(res => { if(!res.ok) showAlert("保存失败"); else if(callback) callback(updatedClientData); })
+                .catch(err => showAlert("保存失败: " + err.message));
+            }
+        };
+
+        const handleUpdateAppointments = (appointmentData, isDelete = false) => {
+            let updatedAppointments;
+            if (isDelete) {
+                updatedAppointments = counselorData.appointments.filter(appt => appt.id !== appointmentData.id);
+            } else {
+                const existingIndex = counselorData.appointments.findIndex(appt => appt.id === appointmentData.id);
+                updatedAppointments = [...counselorData.appointments];
+                if (existingIndex > -1) {
+                    updatedAppointments[existingIndex] = appointmentData;
+                } else {
+                   updatedAppointments = [...updatedAppointments, {...appointmentData, id: `appt-${Date.now()}`}];
+                }
+            }
+            const fullDataToSave = {
+                clients: counselorData.assigned_clients,
+                appointments: updatedAppointments
+            };
+
+            setCounselorData(prev => ({...prev, appointments: updatedAppointments}));
+
+            fetch(`/api/data/counselor/${user.username}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(fullDataToSave),
+            }).then(res => { if(!res.ok) showAlert("日程保存失败")});
+        };
+
+        const handleSelectClient = (client) => { setSelectedClient(client); setActiveSection('clientDetail'); };
+        
+        const navItems = [
+            { id: 'clientManagement', label: '来访者管理', icon: '👥' },
+            { id: 'counselorManagement', label: '咨询师信息', icon: '🧑‍🏫' },
+            { id: 'schedule', label: '咨询日程', icon: '🗓️' },
+            { id: 'cbtApplication', label: '辅助工具', icon: '🧠' }
+        ];
+
+        const renderSection = () => {
+            if (!counselorData) {
+                return <div className="text-center p-10 text-gray-600 font-semibold">正在加载...</div>;
+            }
+            switch (activeSection) {
+            case 'clientManagement':
+                return <ClientManagementSection 
+                          clients={counselorData.assigned_clients}
+                          unassignedClients={counselorData.unassigned_clients}
+                          onSelectClient={handleSelectClient} 
+                          currentUser={user}
+                          fetchData={fetchData}
+                          showAlert={showAlert}
+                          isManagerView={false}
+                       />;
+            case 'counselorManagement':
+                return <CounselorManagementSection 
+                          counselors={counselorData.counselors}
+                          clients={counselorData.assigned_clients} 
+                          appointments={counselorData.appointments} 
+                          currentUser={user}
+                          isManagerView={false}
+                       />;
+            case 'schedule':
+                return <ScheduleSection 
+                          appointments={counselorData.appointments} 
+                          clients={counselorData.counselors.flatMap(c => c.assignedClientIds).concat(counselorData.assigned_clients.map(c=>c.id)).reduce((acc,id) => { if(!acc.includes(id)) acc.push(id); return acc;}, []).map(id => counselorData.assigned_clients.find(c=>c.id===id)).filter(Boolean)}
+                          counselors={counselorData.counselors} 
+                          onUpdateAppointments={handleUpdateAppointments}
+                       />;
+            case 'clientDetail':
+                return selectedClient ? 
+                       <ClientDetailView 
+                          key={selectedClient.id + JSON.stringify(selectedClient.sessions)} 
+                          client={selectedClient} 
+                          allClients={counselorData.assigned_clients} 
+                          onUpdateClient={handleUpdateClient} 
+                          globalLoadingMessage={globalLoadingMessage}
+                          setGlobalLoadingMessage={setGlobalLoadingMessage}
+                          showAlert={showAlert}
+                        /> : 
+                       <div className="text-center p-10 text-gray-500">请先从“来访者管理”页面选择一位来访者。</div>;
+            case 'cbtApplication':
+                return <CBTSection showAlert={showAlert}/>;
+            default:
+                return <ScheduleSection appointments={counselorData.appointments} clients={counselorData.assigned_clients} counselors={counselorData.counselors} onUpdateAppointments={handleUpdateAppointments} />;
+            }
+        };
+
+        return (
+            <div className="min-h-screen bg-gray-50 flex flex-col">
+              <header className="bg-white shadow-sm sticky top-0 z-40"><div className="container mx-auto px-4"><div className="flex items-center justify-between h-16">
+              <button onClick={() => setActiveSection('schedule')} className="flex items-center cursor-pointer">
+                <span className="text-2xl mr-3">💌</span>
+                <h1 className="text-xl font-bold text-gray-800">咨询师工作台</h1>
+              </button>
+              <div className="flex items-center gap-4">
+                <nav className="hidden md:flex items-center space-x-1">
+                    {navItems.map(item => (
+                        <button 
+                            key={item.id} 
+                            onClick={()=>setActiveSection(item.id)} 
+                            className={`px-3 py-2 rounded-md text-sm font-medium flex items-center transition-colors duration-200 ${activeSection === item.id || (activeSection === 'clientDetail' && item.id === 'clientManagement') ? 'bg-blue-50 text-blue-600' : 'text-gray-500 hover:bg-gray-100'}`}
+                        >
+                            <span className="mr-2">{item.icon}</span>{item.label}
+                        </button>
+                    ))}
+                </nav>
+                <div className="border-l pl-4 flex items-center gap-2">
+                    <span className="text-sm text-gray-500 hidden lg:inline">{user.username}</span>
+                    <button onClick={onLogout} className="text-sm font-medium text-gray-500 hover:text-red-600">登出</button>
+                </div>
+               </div>
+              </div></div></header>
+              {globalLoadingMessage && (<div className="bg-yellow-100 text-yellow-800 text-center p-2 animate-pulse flex items-center justify-center sticky top-16 z-30"><span className="mr-2">⏳</span>{globalLoadingMessage}</div>)}
+              <main className="flex-grow container mx-auto p-4 sm:p-6 lg:p-8">{renderSection()}</main>
+            </div>
+        );
+    };
+
+    // ================================================================================================
+    // ====================================== SHARED COMPONENTS =======================================
+    // ================================================================================================
+
+    const CounselorManagementSection = ({ counselors, clients, appointments, onUpdateCounselors, onDeleteCounselor, onSaveUser, currentUser, isManagerView }) => {
         const { useState, useMemo } = React;
         const [view, setView] = useState('list'); // 'list' or 'form'
         const [counselorToEdit, setCounselorToEdit] = useState(null);
-
+        
         const counselorsWithHours = useMemo(() => {
+            if(!counselors) return [];
             const currentMonth = new Date().getMonth();
             const currentYear = new Date().getFullYear();
-            const processed = counselors.map(counselor => {
+            return counselors.map(counselor => {
                 const monthlyHours = appointments.filter(appt => {
                     if (!appt.date) return false;
                     const apptDate = new Date(appt.date);
-                    return appt.counselorId === counselor.id && apptDate.getMonth() === currentMonth && apptDate.getFullYear() === currentYear;
+                    return appt.counselorId === counselor.id &&
+                           apptDate.getMonth() === currentMonth &&
+                           apptDate.getFullYear() === currentYear;
                 }).length;
                 const totalHours = appointments.filter(appt => appt.counselorId === counselor.id).length;
                 return { ...counselor, monthlyHours, totalHours };
             });
-            if (!isManager && currentUserProfile) {
-                const selfIndex = processed.findIndex(c => c.id === currentUserProfile.id);
-                if (selfIndex > 0) {
-                    const self = processed.splice(selfIndex, 1)[0];
-                    processed.unshift(self);
-                }
-            }
-            return processed;
-        }, [counselors, appointments, isManager, currentUserProfile]);
+        }, [counselors, appointments]);
 
-        if(view === 'form') {
-            return <CounselorForm
-                onSave={(counselorData) => {
+        if (view === 'form') {
+            return <CounselorForm 
+                onSave={(counselorData, password) => {
                     let updatedList;
                     if (counselorToEdit) {
                         updatedList = counselors.map(c => c.id === counselorToEdit.id ? { ...counselorToEdit, ...counselorData } : c);
@@ -698,32 +761,56 @@
                         updatedList = [...counselors, { ...counselorData, id: `counselor-${Date.now()}`, assignedClientIds: counselorData.assignedClientIds || [] }];
                     }
                     onUpdateCounselors(updatedList);
+                    if(isManagerView && password) {
+                        onSaveUser(counselorData.username, password, 'counselor', !counselorToEdit);
+                    }
                     setView('list');
                 }}
                 onCancel={() => setView('list')}
                 counselorToEdit={counselorToEdit}
                 allClients={clients}
-                isManager={isManager}
+                isManagerView={isManagerView}
             />
         }
         
-        const openEditForm = (counselor) => {
-            setCounselorToEdit(counselor);
-            setView('form');
-        };
+        const openEditForm = (counselor) => { setCounselorToEdit(counselor); setView('form'); };
+        
+        const loggedInCounselor = !isManagerView ? counselorsWithHours.find(c => c.username === currentUser.username) : null;
+        const otherCounselors = !isManagerView ? counselorsWithHours.filter(c => c.username !== currentUser.username) : counselorsWithHours;
 
         return (
             <div className="bg-white p-6 rounded-lg shadow-md animate-fadeIn">
                 <div className="flex justify-between items-center mb-6 pb-4 border-b">
-                    <h2 className="text-2xl font-semibold text-gray-700 flex items-center"><span className="mr-3 text-2xl">🧑‍🏫</span>咨询师管理</h2>
-                    {isManager && <button onClick={() => { setCounselorToEdit(null); setView('form'); }} className="bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2 px-4 rounded-lg flex items-center shadow-sm"><span className="mr-2">➕</span>添加咨询师</button>}
+                    <h2 className="text-2xl font-semibold text-gray-700 flex items-center"><span className="mr-3 text-2xl">🧑‍🏫</span>{isManagerView ? '咨询师管理' : '咨询师信息'}</h2>
+                    {isManagerView && <button onClick={() => { setCounselorToEdit(null); setView('form'); }} className="bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2 px-4 rounded-lg flex items-center shadow-sm"><span className="mr-2">➕</span>添加咨询师</button>}
                 </div>
+
+                {loggedInCounselor && (
+                  <div className="mb-8 border-b pb-6">
+                    <h3 className="text-xl font-semibold text-gray-800 mb-4">我的档案</h3>
+                    <div className="bg-blue-50 border rounded-lg p-4 flex flex-col">
+                        <div className="flex justify-between items-start">
+                           <div>
+                                <h3 className="text-xl font-bold text-blue-700">{loggedInCounselor.name}</h3>
+                                <p className="text-sm text-gray-600 mt-1">{loggedInCounselor.modality}</p>
+                           </div>
+                           <div className="text-right flex gap-4">
+                               <div><p className="text-sm text-gray-600">本月</p><p className="text-2xl font-bold text-blue-800">{loggedInCounselor.monthlyHours} <span className="text-base font-normal">小时</span></p></div>
+                               <div><p className="text-sm text-gray-600">总计</p><p className="text-2xl font-bold text-gray-800">{loggedInCounselor.totalHours} <span className="text-base font-normal">小时</span></p></div>
+                           </div>
+                        </div>
+                        <h4 className="text-sm font-bold text-gray-700 mt-4 border-t pt-3">负责来访:</h4>
+                        <div className="flex flex-wrap gap-2 mt-2">{clients.filter(c => loggedInCounselor.assignedClientIds?.includes(c.id)).map(client => <span key={client.id} className="text-xs bg-gray-200 text-gray-800 px-2 py-1 rounded-full">{client.name}</span>)}</div>
+                    </div>
+                  </div>
+                )}
+                
+                {otherCounselors.length > 0 && <h3 className="text-xl font-semibold text-gray-800 mb-4">{!isManagerView ? "其他咨询师" : "所有咨询师"}</h3>}
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                    {counselorsWithHours.map(counselor => {
+                    {otherCounselors.map(counselor => {
                         const assignedClients = clients.filter(client => counselor.assignedClientIds?.includes(client.id));
-                        const canEdit = isManager || (currentUserProfile && counselor.id === currentUserProfile.id);
                         return (
-                            <div key={counselor.id} className={`border rounded-lg p-4 flex flex-col ${canEdit ? 'bg-gray-50' : 'bg-white'}`}>
+                            <div key={counselor.id} className="bg-gray-50 border rounded-lg p-4 flex flex-col">
                                 <div className="flex-grow">
                                     <div className="flex justify-between items-start">
                                         <div>
@@ -732,54 +819,45 @@
                                             <p className="text-xs text-gray-500 mt-1">用户名: {counselor.username}</p>
                                         </div>
                                         <div className="text-right flex gap-4">
-                                            <div>
-                                                <p className="text-sm text-gray-600">本月</p>
-                                                <p className="text-2xl font-bold text-blue-800">{counselor.monthlyHours} <span className="text-base font-normal">小时</span></p>
-                                            </div>
-                                            <div>
-                                                <p className="text-sm text-gray-600">总计</p>
-                                                <p className="text-2xl font-bold text-gray-800">{counselor.totalHours} <span className="text-base font-normal">小时</span></p>
-                                            </div>
+                                            <div><p className="text-sm text-gray-600">本月</p><p className="text-2xl font-bold text-blue-800">{counselor.monthlyHours} <span className="text-base font-normal">小时</span></p></div>
+                                            <div><p className="text-sm text-gray-600">总计</p><p className="text-2xl font-bold text-gray-800">{counselor.totalHours} <span className="text-base font-normal">小时</span></p></div>
                                         </div>
                                     </div>
-                                    {canEdit && (
-                                        <>
-                                            <h4 className="text-sm font-bold text-gray-700 mt-4 border-t pt-3">负责来访:</h4>
-                                            {assignedClients.length > 0 ? (
-                                                <div className="flex flex-wrap gap-2 mt-2">
-                                                    {assignedClients.map(client => <span key={client.id} className="text-xs bg-gray-200 text-gray-800 px-2 py-1 rounded-full">{client.name}</span>)}
-                                                </div>
-                                            ) : <p className="text-xs text-gray-500 mt-2">暂无</p>}
-                                        </>
-                                    )}
+                                    
+                                    {isManagerView && <>
+                                        <h4 className="text-sm font-bold text-gray-700 mt-4 border-t pt-3">负责来访:</h4>
+                                        {assignedClients.length > 0 ? (
+                                            <div className="flex flex-wrap gap-2 mt-2">
+                                                {assignedClients.map(client => <span key={client.id} className="text-xs bg-gray-200 text-gray-800 px-2 py-1 rounded-full">{client.name}</span>)}
+                                            </div>
+                                        ) : <p className="text-xs text-gray-500 mt-2">暂无</p>}
+                                    </>}
                                 </div>
-                                {canEdit && (
-                                    <div className="flex justify-end space-x-2 mt-4 pt-4 border-t">
-                                        <button onClick={() => openEditForm(counselor)} className="text-xs font-medium text-blue-600 hover:underline">编辑</button>
-                                        {isManager && <button onClick={() => onDeleteCounselor(counselor.id)} className="text-xs font-medium text-red-600 hover:underline">删除</button>}
-                                    </div>
-                                )}
+                                {isManagerView && <div className="flex justify-end space-x-2 mt-4 pt-4 border-t">
+                                    <button onClick={() => openEditForm(counselor)} className="text-xs font-medium text-blue-600 hover:underline">编辑</button>
+                                    <button onClick={() => onDeleteCounselor(counselor.id)} className="text-xs font-medium text-red-600 hover:underline">删除</button>
+                                </div>}
                             </div>
                         )
                     })}
                 </div>
-                {counselors.length === 0 && <p className="text-center text-gray-500 py-8">暂无咨询师信息。点击“添加咨询师”开始。</p>}
+                 {counselors.length === 0 && <p className="text-center text-gray-500 py-8">暂无咨询师信息。点击“添加咨询师”开始。</p>}
             </div>
         );
     };
 
-    const CounselorForm = ({ onSave, onCancel, counselorToEdit, allClients, isManager }) => {
+    const CounselorForm = ({ onSave, onCancel, counselorToEdit, allClients, isManagerView }) => {
         const { useState } = React;
         const [formData, setFormData] = useState({
             name: counselorToEdit?.name || '',
             modality: counselorToEdit?.modality || '',
             username: counselorToEdit?.username || '',
-            password: '', // Password field
             assignedClientIds: counselorToEdit?.assignedClientIds || [],
         });
-
+        const [password, setPassword] = useState('');
+        
         const handleClientSelection = (clientId) => {
-            setFormData(prev => {
+             setFormData(prev => {
                 const newIds = prev.assignedClientIds.includes(clientId)
                     ? prev.assignedClientIds.filter(id => id !== clientId)
                     : [...prev.assignedClientIds, clientId];
@@ -795,39 +873,44 @@
         const handleSubmit = (e) => {
             e.preventDefault();
             if (!formData.name.trim() || !formData.username.trim()) { alert('姓名和用户名均为必填项。'); return; }
-            onSave(formData);
+            if (isManagerView && !counselorToEdit && !password) { alert('为新咨询师设置初始密码。'); return; }
+            onSave(formData, password);
         };
 
         return (
             <div className="bg-white p-6 rounded-lg shadow-md animate-fadeIn">
-                <div className="flex justify-between items-center mb-4 pb-4 border-b">
-                    <h3 className="text-2xl font-semibold text-gray-700">{counselorToEdit ? '编辑' : '添加'}咨询师</h3>
-                    <button onClick={onCancel} className="text-sm font-medium text-gray-600 hover:text-gray-900">← 返回列表</button>
-                </div>
+              <div className="flex justify-between items-center mb-4 pb-4 border-b">
+                <h3 className="text-2xl font-semibold text-gray-700">{counselorToEdit ? '编辑' : '添加'}咨询师</h3>
+                <button onClick={onCancel} className="text-sm font-medium text-gray-600 hover:text-gray-900">← 返回列表</button>
+              </div>
                 <form onSubmit={handleSubmit} className="space-y-4 max-w-lg mx-auto">
-                    <div><label className="block text-sm font-medium">姓名 <span className="text-red-500">*</span></label><input type="text" name="name" value={formData.name} onChange={handleChange} required className="w-full p-2 border rounded-md" /></div>
-                    <div><label className="block text-sm font-medium">用户名 (用于登录) <span className="text-red-500">*</span></label><input type="text" name="username" value={formData.username} onChange={handleChange} required className="w-full p-2 border rounded-md" disabled={!!counselorToEdit} /></div>
-                    {isManager && (
-                        <div><label className="block text-sm font-medium">密码 {counselorToEdit ? '(留空则不修改)' : <span className="text-red-500">*</span>}</label><input type="password" name="password" value={formData.password} onChange={handleChange} required={!counselorToEdit} className="w-full p-2 border rounded-md" /></div>
-                    )}
-                    <div><label className="block text-sm font-medium">擅长咨询流派</label><input type="text" name="modality" value={formData.modality} onChange={handleChange} className="w-full p-2 border rounded-md" /></div>
-                    <div>
-                        <label className="block text-sm font-medium">负责来访 (可点击选择)</label>
-                        <div className="max-h-32 overflow-y-auto border rounded-md p-2 mt-1 select-none">
-                            {allClients.map(client => (
-                                <div key={client.id} onClick={() => handleClientSelection(client.id)} className={`p-1 rounded cursor-pointer ${formData.assignedClientIds.includes(client.id) ? 'bg-blue-200' : 'hover:bg-gray-100'}`} >
-                                    <span className="text-sm text-gray-800">{client.name}</span>
-                                </div>
-                            ))}
-                            {allClients.length === 0 && <p className="text-xs text-gray-400 text-center py-2">暂无来访者</p>}
-                        </div>
+                  <div><label className="block text-sm font-medium">姓名 <span className="text-red-500">*</span></label><input type="text" name="name" value={formData.name} onChange={handleChange} required className="w-full p-2 border rounded-md" /></div>
+                  <div><label className="block text-sm font-medium">用户名 (用于登录) <span className="text-red-500">*</span></label><input type="text" name="username" value={formData.username} onChange={handleChange} required className="w-full p-2 border rounded-md" disabled={!!counselorToEdit} /></div>
+                  {isManagerView && <div><label className="block text-sm font-medium">密码 {counselorToEdit ? '(留空即不修改)' : <span className="text-red-500">*</span>}</label><input type="password" value={password} onChange={e=>setPassword(e.target.value)} className="w-full p-2 border rounded-md" /></div>}
+                  <div><label className="block text-sm font-medium">擅长咨询流派</label><input type="text" name="modality" value={formData.modality} onChange={handleChange} className="w-full p-2 border rounded-md" /></div>
+                  
+                  {isManagerView && <div>
+                    <label className="block text-sm font-medium">负责来访 (可点击选择)</label>
+                    <div className="max-h-32 overflow-y-auto border rounded-md p-2 mt-1 select-none">
+                        {allClients.map(client => (
+                            <div 
+                                key={client.id} 
+                                onClick={() => handleClientSelection(client.id)}
+                                className={`p-1 rounded cursor-pointer ${formData.assignedClientIds.includes(client.id) ? 'bg-blue-200' : 'hover:bg-gray-100'}`}
+                            >
+                                <span className="text-sm text-gray-800">{client.name}</span>
+                            </div>
+                        ))}
+                         {allClients.length === 0 && <p className="text-xs text-gray-400 text-center py-2">暂无来访者</p>}
                     </div>
-                    <div className="flex justify-end space-x-3 pt-4 border-t mt-6">
-                        <button type="button" onClick={onCancel} className="px-4 py-2 bg-gray-200 hover:bg-gray-300 rounded-md border">取消</button>
-                        <button type="submit" className="px-4 py-2 text-white bg-blue-600 hover:bg-blue-700 rounded-md flex items-center shadow-sm">
-                            <span className="mr-2">💾</span>保存
-                        </button>
-                    </div>
+                  </div>}
+
+                  <div className="flex justify-end space-x-3 pt-4 border-t mt-6">
+                    <button type="button" onClick={onCancel} className="px-4 py-2 bg-gray-200 hover:bg-gray-300 rounded-md border">取消</button>
+                    <button type="submit" className="px-4 py-2 text-white bg-blue-600 hover:bg-blue-700 rounded-md flex items-center shadow-sm">
+                        <span className="mr-2">💾</span>保存
+                    </button>
+                  </div>
                 </form>
             </div>
         );
@@ -837,13 +920,19 @@
         const { useState } = React;
         const [view, setView] = useState('daily'); // 'daily', 'overview', or 'form'
         const [appointmentToEdit, setAppointmentToEdit] = useState(null);
-
+        
         if (view === 'form') {
             return (
                 <AppointmentForm
-                    onSave={(appointmentData) => { onUpdateAppointments(appointmentData); setView('daily'); }}
+                    onSave={(appointmentData) => {
+                        onUpdateAppointments(appointmentData);
+                        setView('daily');
+                    }}
                     onCancel={() => setView('daily')}
-                    onDelete={(appointmentData) => { onUpdateAppointments(appointmentData, true); setView('daily'); }}
+                    onDelete={(appointmentData) => {
+                        onUpdateAppointments(appointmentData, true);
+                        setView('daily');
+                    }}
                     appointmentToEdit={appointmentToEdit}
                     clients={clients}
                     counselors={counselors}
@@ -854,21 +943,31 @@
         return (
             <div className="bg-white p-6 rounded-lg shadow-md animate-fadeIn">
                 <div className="flex flex-wrap justify-between items-center mb-6 pb-4 border-b gap-4">
-                    <h2 className="text-2xl font-semibold text-gray-700 flex items-center"><span className="mr-3 text-2xl">🗓️</span>咨询日程</h2>
-                    <div className="flex items-center gap-4">
-                         <div className="flex items-center bg-gray-100 rounded-lg p-1">
-                            <button onClick={() => setView('daily')} className={`px-3 py-1 text-sm rounded-md ${view === 'daily' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-600'}`}>每日视图</button>
-                            <button onClick={() => setView('overview')} className={`px-3 py-1 text-sm rounded-md ${view === 'overview' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-600'}`}>三月总览</button>
-                        </div>
-                        <button onClick={() => { setAppointmentToEdit(null); setView('form');}} className="bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2 px-4 rounded-lg flex items-center shadow-sm"><span className="mr-2">➕</span>添加日程</button>
-                    </div>
+                   <h2 className="text-2xl font-semibold text-gray-700 flex items-center"><span className="mr-3 text-2xl">🗓️</span>咨询日程</h2>
+                   <div className="flex items-center gap-4">
+                       <div className="flex items-center bg-gray-100 rounded-lg p-1">
+                           <button onClick={() => setView('daily')} className={`px-3 py-1 text-sm rounded-md ${view === 'daily' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-600'}`}>每日视图</button>
+                           <button onClick={() => setView('overview')} className={`px-3 py-1 text-sm rounded-md ${view === 'overview' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-600'}`}>三月总览</button>
+                       </div>
+                       <button onClick={() => { setAppointmentToEdit(null); setView('form');}} className="bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2 px-4 rounded-lg flex items-center shadow-sm"><span className="mr-2">➕</span>添加日程</button>
+                   </div>
                 </div>
-                {view === 'daily' && <ScheduleDailyView appointments={appointments} clients={clients} counselors={counselors} onSelectAppointment={(appt) => { setAppointmentToEdit(appt); setView('form'); }} /> }
+                
+                {view === 'daily' && 
+                    <ScheduleDailyView 
+                        appointments={appointments}
+                        clients={clients}
+                        counselors={counselors}
+                        onSelectAppointment={(appt) => { setAppointmentToEdit(appt); setView('form'); }}
+                    />
+                }
+
                 {view === 'overview' && <ScheduleOverview appointments={appointments} /> }
+
             </div>
         );
     };
-
+    
     const ScheduleDailyView = ({ appointments, clients, counselors, onSelectAppointment }) => {
         const { useState, useMemo } = React;
         const [currentDate, setCurrentDate] = useState(new Date());
@@ -880,14 +979,16 @@
                 return newDate;
             });
         };
-
+        
         const appointmentsByHour = useMemo(() => {
             const dateStr = currentDate.toISOString().split('T')[0];
             const filtered = appointments.filter(appt => appt.date === dateStr);
             const grouped = {};
             filtered.forEach(appt => {
                 const hour = appt.time.substring(0, 2);
-                if (!grouped[hour]) { grouped[hour] = []; }
+                if (!grouped[hour]) {
+                    grouped[hour] = [];
+                }
                 grouped[hour].push(appt);
             });
             return grouped;
@@ -895,25 +996,27 @@
 
         const renderHourlySchedule = () => {
             const hours = Array.from({length: 15}, (_, i) => 8 + i); // 8:00 to 22:00
+
             return hours.map(hour => {
                 const hourStr = String(hour).padStart(2, '0');
                 const hourAppointments = appointmentsByHour[hourStr] || [];
+                
                 return (
                     <tr key={hour} className="border-b">
                         <td className="p-2 w-24 text-center text-sm text-gray-500 align-top">{hourStr}:00</td>
                         <td className="p-1">
-                            <div className="time-slot">
-                                {hourAppointments.length > 0 ? (
-                                    hourAppointments.map(appointment => (
-                                        <div key={appointment.id} className="bg-blue-100 border-l-4 border-blue-500 p-2 rounded-r-lg cursor-pointer hover:bg-blue-200" onClick={()=> onSelectAppointment(appointment)}>
-                                            <p className="font-bold text-sm text-blue-800">{clients.find(c => c.id === appointment.clientId)?.name}</p>
-                                            <p className="text-xs text-gray-600">咨询师: {counselors.find(c => c.id === appointment.counselorId)?.name}</p>
-                                            {appointment.location && <p className="text-xs text-gray-600">地点: {appointment.location}</p>}
-                                            {appointment.notes && <p className="text-xs text-gray-500 mt-1 italic">"{appointment.notes}"</p>}
-                                        </div>
-                                    ))
-                                ) : (<div className="h-10"></div>)}
-                            </div>
+                          <div className="time-slot">
+                            {hourAppointments.length > 0 ? (
+                                hourAppointments.map(appointment => (
+                                    <div key={appointment.id} className="bg-blue-100 border-l-4 border-blue-500 p-2 rounded-r-lg cursor-pointer hover:bg-blue-200" onClick={() => onSelectAppointment(appointment)}>
+                                        <p className="font-bold text-sm text-blue-800">{clients.find(c => c.id === appointment.clientId)?.name}</p>
+                                        <p className="text-xs text-gray-600">咨询师: {counselors.find(c => c.id === appointment.counselorId)?.name}</p>
+                                        {appointment.location && <p className="text-xs text-gray-600">地点: {appointment.location}</p>}
+                                        {appointment.notes && <p className="text-xs text-gray-500 mt-1 italic">"{appointment.notes}"</p>}
+                                    </div>
+                                ))
+                            ) : (<div className="h-10"></div>)}
+                          </div>
                         </td>
                     </tr>
                 );
@@ -922,10 +1025,10 @@
 
         return (
             <div>
-                <div className="flex justify-between items-center mb-4">
+                 <div className="flex justify-between items-center mb-4">
                     <button onClick={() => changeDay(-1)} className="p-2 rounded-md hover:bg-gray-100">❮ 前一天</button>
                     <h3 className="text-xl font-semibold text-gray-700">{currentDate.toLocaleDateString('zh-CN', { year: 'numeric', month: 'long', day: 'numeric' })}</h3>
-                    <button onClick={()=> changeDay(1)} className="p-2 rounded-md hover:bg-gray-100">后一天 ❯</button>
+                    <button onClick={() => changeDay(1)} className="p-2 rounded-md hover:bg-gray-100">后一天 ❯</button>
                 </div>
                 <div className="border rounded-lg overflow-hidden">
                     <table className="w-full">
@@ -943,7 +1046,7 @@
             </div>
         )
     };
-    
+
     const ScheduleOverview = ({ appointments }) => {
         const { useMemo } = React;
         const appointmentsByDate = useMemo(() => {
@@ -961,27 +1064,30 @@
             const firstDay = new Date(year, month, 1).getDay();
             const daysInMonth = new Date(year, month + 1, 0).getDate();
             const days = [];
+            
             for (let i = 0; i < firstDay; i++) {
                 days.push(<div key={`empty-${i}`} className="border-t border-l"></div>);
             }
+
             for (let day = 1; day <= daysInMonth; day++) {
                 const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
                 const dayAppointments = appointmentsByDate[dateStr] || [];
                 const appointmentCount = dayAppointments.length;
                 const counselorCount = new Set(dayAppointments.map(a => a.counselorId)).size;
                 const isToday = new Date(dateStr).toDateString() === new Date().toDateString();
+
                 days.push(
                     <div key={day} className="border-t border-l p-1 text-sm h-24 flex flex-col">
                         <div className={`self-start ${isToday ? 'bg-blue-600 text-white rounded-full h-6 w-6 flex items-center justify-center' : ''}`}>{day}</div>
                         {appointmentCount > 0 && 
                             <div className="flex-grow flex flex-col items-end justify-end gap-1 text-xs font-bold p-1">
                                 <div className="flex items-center gap-1">
-                                    <span className="text-blue-600" title="单日咨询数量">{appointmentCount}</span>
-                                    <span className="w-2 h-2 bg-blue-500 rounded-full"></span>
+                                  <span className="text-blue-600" title="单日咨询数量">{appointmentCount}</span>
+                                  <span className="w-2 h-2 bg-blue-500 rounded-full"></span>
                                 </div>
                                 <div className="flex items-center gap-1">
-                                    <span className="text-green-600" title="在岗咨询师数量">{counselorCount}</span>
-                                    <span className="w-2 h-2 bg-green-500 rounded-full"></span>
+                                  <span className="text-green-600" title="在岗咨询师数量">{counselorCount}</span>
+                                  <span className="w-2 h-2 bg-green-500 rounded-full"></span>
                                 </div>
                             </div>
                         }
@@ -992,12 +1098,13 @@
                 <div>
                     <h3 className="text-lg font-semibold text-center mb-2">{date.toLocaleDateString('zh-CN', { month: 'long', year: 'numeric' })}</h3>
                     <div className="grid grid-cols-7 text-xs text-center border-r border-b">
-                        {['日', '一', '二', '三', '四', '五', '六'].map(d => <div key={d} className="border-t border-l font-bold p-1 bg-gray-50">{d}</div>)}
-                        {days}
+                         {['日', '一', '二', '三', '四', '五', '六'].map(d => <div key={d} className="border-t border-l font-bold p-1 bg-gray-50">{d}</div>)}
+                         {days}
                     </div>
                 </div>
             )
         };
+        
         const today = new Date();
         const month1 = new Date(today.getFullYear(), today.getMonth(), 1);
         const month2 = new Date(today.getFullYear(), today.getMonth() + 1, 1);
@@ -1005,7 +1112,7 @@
         
         return (
             <div>
-                 <div className="flex justify-end gap-4 text-xs mb-2">
+                <div className="flex justify-end gap-4 text-xs mb-2">
                     <span><span className="font-bold text-blue-600">■</span> 单日咨询数量</span>
                     <span><span className="font-bold text-green-600">■</span> 在岗咨询师数量</span>
                 </div>
@@ -1017,7 +1124,7 @@
             </div>
         );
     };
-
+    
     const AppointmentForm = ({ onSave, onCancel, onDelete, appointmentToEdit, clients, counselors }) => {
         const { useState } = React;
         const [formData, setFormData] = useState({
@@ -1029,7 +1136,7 @@
             counselorId: appointmentToEdit?.counselorId || (counselors[0]?.id || ''),
             notes: appointmentToEdit?.notes || '',
         });
-
+        
         const handleChange = (e) => {
             const { name, value } = e.target;
             setFormData(prev => ({...prev, [name]: value}));
@@ -1037,12 +1144,17 @@
 
         const handleSubmit = (e) => {
             e.preventDefault();
-            if(!formData.clientId || !formData.counselorId) { alert('请选择来访者和咨询师'); return; }
+            if (!formData.clientId || !formData.counselorId) {
+                alert('请选择来访者和咨询师');
+                return;
+            }
             onSave(formData);
         };
         
         const handleDeleteClick = () => {
-             if (window.confirm('你确定要删除这个日程安排吗?')) { onDelete(formData); }
+             if (window.confirm('你确定要删除这个日程安排吗?')) {
+                 onDelete(formData);
+             }
         }
 
         return (
@@ -1055,207 +1167,230 @@
                     <div><label className="block text-sm font-medium">日期</label><input type="date" name="date" value={formData.date} onChange={handleChange} required className="w-full p-2 border rounded-md"/></div>
                     <div><label className="block text-sm font-medium">时间</label><input type="time" name="time" value={formData.time} onChange={handleChange} required className="w-full p-2 border rounded-md" step="3600"/></div>
                     <div><label className="block text-sm font-medium">咨询地点</label><input type="text" name="location" value={formData.location} onChange={handleChange} placeholder="例如：咨询室 201 或 线上会议" className="w-full p-2 border rounded-md"/></div>
-                    <div><label className="block text-sm font-medium">来访者</label><select name="clientId" value={formData.clientId} onChange={handleChange} required className="w-full p-2 border rounded-md">{clients.length > 0 ? clients.map(c => <option key={c.id} value={c.id}>{c.name}</option>) : <option disabled>请先添加来访者</option>}</select></div>
-                    <div><label className="block text-sm font-medium">咨询师</label><select name="counselorId" value={formData.counselorId} onChange={handleChange} required className="w-full p-2 border rounded-md">{counselors.length > 0 ? counselors.map(c => <option key={c.id} value={c.id}>{c.name}</option>) : <option disabled>请先添加咨询师</option>}</select></div>
+                    <div><label className="block text-sm font-medium">来访者</label><select name="clientId" value={formData.clientId} onChange={handleChange} required className="w-full p-2 border rounded-md">{clients && clients.length > 0 ? clients.map(c => <option key={c.id} value={c.id}>{c.name}</option>) : <option disabled>请先添加来访者</option>}</select></div>
+                    <div><label className="block text-sm font-medium">咨询师</label><select name="counselorId" value={formData.counselorId} onChange={handleChange} required className="w-full p-2 border rounded-md">{counselors && counselors.length > 0 ? counselors.map(c => <option key={c.id} value={c.id}>{c.name}</option>) : <option disabled>请先添加咨询师</option>}</select></div>
                     <div><label className="block text-sm font-medium">备注</label><textarea name="notes" value={formData.notes} onChange={handleChange} rows="3" className="w-full p-2 border rounded-md"></textarea></div>
                     <div className="flex justify-between items-center pt-4 border-t mt-6">
-                        {appointmentToEdit && <button type="button" onClick={handleDeleteClick} className="px-4 py-2 text-white bg-red-600 hover:bg-red-700 rounded-md shadow-sm">删除</button>}
-                        <div className="flex-grow flex justify-end space-x-3">
-                            <button type="button" onClick={onCancel} className="px-4 py-2 bg-gray-200 hover:bg-gray-300 rounded-md border">取消</button>
-                            <button type="submit" className="px-4 py-2 text-white bg-blue-600 hover:bg-blue-700 rounded-md flex items-center shadow-sm"><span className="mr-2">💾</span>保存</button>
-                        </div>
+                       {appointmentToEdit && <button type="button" onClick={handleDeleteClick} className="px-4 py-2 text-white bg-red-600 hover:bg-red-700 rounded-md shadow-sm">删除</button>}
+                       <div className="flex-grow flex justify-end space-x-3">
+                           <button type="button" onClick={onCancel} className="px-4 py-2 bg-gray-200 hover:bg-gray-300 rounded-md border">取消</button>
+                           <button type="submit" className="px-4 py-2 text-white bg-blue-600 hover:bg-blue-700 rounded-md flex items-center shadow-sm"><span className="mr-2">💾</span>保存</button>
+                       </div>
                     </div>
                 </form>
             </div>
         );
     };
 
-    const ClientManagementSection = ({ clients, onAddClient, onSelectClient, isManager, onAssignClientClick }) => {
+    const ClientManagementSection = ({ clients, unassignedClients, onSelectClient, onUpdateClient, onDeleteClient, onSaveUser, selectedClient, onClientDetailBack, setGlobalLoadingMessage, showAlert, currentUser, fetchData, isManagerView }) => {
         const { useState } = React;
         const [view, setView] = useState('list');
         const [searchTerm, setSearchTerm] = useState('');
         const [clientToEdit, setClientToEdit] = useState(null);
-        
-        const buttonText = isManager ? "➕ 添加新来访" : "🤝 分配来访者";
-        const handleButtonClick = () => {
-            if (isManager) {
-                setClientToEdit(null);
-                setView('form');
-            } else {
-                onAssignClientClick();
-            }
-        };
+        const [isAssignModalOpen, setIsAssignModalOpen] = useState(false);
 
-        if (view === 'form' && isManager) {
+        if (selectedClient && isManagerView) {
+            return <ClientDetailView 
+                        key={selectedClient.id + JSON.stringify(selectedClient.sessions)} 
+                        client={selectedClient} 
+                        allClients={clients} 
+                        onUpdateClient={onUpdateClient} 
+                        onDeleteClient={onDeleteClient}
+                        onBack={onClientDetailBack}
+                        setGlobalLoadingMessage={setGlobalLoadingMessage}
+                        showAlert={showAlert}
+                        isManagerView={isManagerView}
+                    />;
+        }
+
+        if (view === 'form') {
             return (
-                <ClientForm
-                    onSave={(clientData, isEditing) => {
-                        onAddClient(clientData, isEditing ? clientToEdit : null);
+                <ClientForm 
+                    onSave={(clientData, password) => {
+                        const isNew = !clientToEdit;
+                        const finalClientData = { ...clientData };
+                        if(isNew) {
+                            finalClientData.id = `client-${Date.now()}`;
+                            finalClientData.sessions = [];
+                            finalClientData.joinDate = new Date().toISOString().split('T')[0];
+                        } else {
+                            finalClientData.id = clientToEdit.id;
+                        }
+                        onUpdateClient(finalClientData);
+                        if(isManagerView && password) {
+                           onSaveUser(clientData.username, password, 'client', isNew);
+                        }
                         setView('list');
                     }}
                     onCancel={() => setView('list')}
                     clientToEdit={clientToEdit}
                     allClients={clients}
-                    isManager={isManager}
+                    isManagerView={isManagerView}
                 />
             )
         }
 
         const filteredClients = clients.filter(client => client.name.toLowerCase().includes(searchTerm.toLowerCase()));
-
-        return (
-            <div className="bg-white p-6 rounded-lg shadow-md animate-fadeIn">
-                <div className="flex justify-between items-center mb-6 pb-4 border-b">
-                    <h2 className="text-2xl font-semibold text-gray-700 flex items-center"><span className="mr-3 text-2xl">👥</span>来访者管理</h2>
-                    <button onClick={handleButtonClick} className="bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2 px-4 rounded-lg flex items-center shadow-sm">{buttonText}</button>
-                </div>
-                <input
-                    type="text"
-                    placeholder="搜索来访者姓名..."
-                    value={searchTerm}
-                    onChange={(e) => setSearchTerm(e.target.value)}
-                    className="w-full p-3 mb-4 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                />
-                {filteredClients.length > 0 ? (
-                    <ul className="space-y-3">
-                        {filteredClients.map(client => (
-                            <li key={client.id} onClick={() => onSelectClient(client)} className="bg-gray-50 hover:bg-blue-50 border rounded-lg p-4 cursor-pointer flex justify-between items-center transition-all duration-200 hover:shadow-md">
-                                <div>
-                                    <p className="text-lg font-medium text-blue-700">{client.name} <span className="text-sm text-gray-500">({client.gender}, {client.age}岁)</span></p>
-                                    <p className="text-sm text-gray-600">加入日期: {client.joinDate}</p>
-                                </div>
-                                <span className="text-gray-400 font-bold">❯</span>
-                            </li>
-                        ))}
-                    </ul>
-                ) : <p className="text-center text-gray-500 py-8">{isManager ? "暂无匹配的来访者。点击“添加新来访”开始。" : "您当前未负责任何来访者，或无搜索结果。"}</p>}
-            </div>
-        );
-    };
-
-    const ClientForm = ({ onSave, onCancel, clientToEdit, allClients, isManager }) => {
-        const { useState } = React;
-        const [formData, setFormData] = useState({
-            name: clientToEdit?.name || '',
-            age: clientToEdit?.age || '',
-            gender: clientToEdit?.gender || '未透露',
-            grade: clientToEdit?.grade || '',
-            sexualOrientation: clientToEdit?.sexualOrientation || '',
-            contact: clientToEdit?.contact || '',
-            referredBy: clientToEdit?.referredBy || '',
-            historyOfIllness: clientToEdit?.historyOfIllness || '',
-            mentalStateScore: clientToEdit?.mentalStateScore || '5',
-            disabilityStatus: clientToEdit?.disabilityStatus || '',
-            religiousBelief: clientToEdit?.religiousBelief || '',
-            ethnicIdentity: clientToEdit?.ethnicIdentity || '',
-            personalFinance: clientToEdit?.personalFinance || '',
-            familyFinance: clientToEdit?.familyFinance || '',
-            username: clientToEdit?.username || '',
-            password: '',
-        });
-
-        const handleChange = (e) => {
-            const { name, value } = e.target;
-            setFormData(prev => ({ ...prev, [name]: value }));
-        };
-
-        const handleSubmit = (e) => {
-            e.preventDefault();
-            if (!formData.name.trim() || !formData.age) { alert('姓名和年龄为必填项。'); return; }
-            if(!formData.username.trim()) { alert('必须为来访者设置一个用户名。'); return; }
-            if(isManager && !clientToEdit && !formData.password.trim()) { alert('新用户必须设置密码。'); return; }
-            const clientData = { ...formData, age: parseInt(formData.age), referredBy: formData.referredBy || null };
-            onSave(clientData, !!clientToEdit);
-        };
         
-        const potentialReferrers = allClients.filter(c => c.id !== clientToEdit?.id);
+        const handleAssignClient = async (clientId) => {
+            try {
+                const res = await fetch('/api/counselor/assign', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ counselorUsername: currentUser.username, clientId }),
+                });
+                if(!res.ok) throw new Error("分配失败");
+                showAlert('来访者已成功分配到您的名下！');
+                setIsAssignModalOpen(false);
+                fetchData(); // Re-fetch data to update lists
+            } catch(err) {
+                showAlert(err.message);
+            }
+        };
+
+        const title = isManagerView ? '来访者管理' : '我的来访者';
+        const buttonText = isManagerView ? '添加新来访' : '负责新来访';
+        const handleButtonClick = () => {
+            if (isManagerView) {
+                setClientToEdit(null);
+                setView('form');
+            } else {
+                setIsAssignModalOpen(true);
+            }
+        };
 
         return (
             <div className="bg-white p-6 rounded-lg shadow-md animate-fadeIn">
-                <div className="flex justify-between items-center mb-6 pb-4 border-b">
-                    <h3 className="text-2xl font-semibold text-gray-700">{clientToEdit ? '编辑' : '添加'}来访者信息</h3>
-                    <button onClick={onCancel} className="text-sm font-medium text-gray-600 hover:text-gray-900">← 返回</button>
-                </div>
-                <form onSubmit={handleSubmit} className="space-y-4">
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                        <div><label className="block text-sm font-medium">姓名 <span className="text-red-500">*</span></label><input type="text" name="name" value={formData.name} onChange={handleChange} required className="w-full p-2 border rounded-md" /></div>
-                        <div><label className="block text-sm font-medium">年龄 <span className="text-red-500">*</span></label><input type="number" name="age" value={formData.age} onChange={handleChange} required className="w-full p-2 border rounded-md" /></div>
-                        <div><label className="block text-sm font-medium">用户名 (用于登录) <span className="text-red-500">*</span></label><input type="text" name="username" value={formData.username} onChange={handleChange} required className="w-full p-2 border rounded-md" disabled={!!clientToEdit} /></div>
-                        {isManager && (
-                          <div><label className="block text-sm font-medium">密码 {clientToEdit ? '(留空则不修改)' : <span className="text-red-500">*</span>}</label><input type="password" name="password" value={formData.password} onChange={handleChange} className="w-full p-2 border rounded-md" /></div>
-                        )}
-                        <div><label className="block text-sm font-medium">性别</label><select name="gender" value={formData.gender} onChange={handleChange} className="w-full p-2 border rounded-md"><option>未透露</option><option>男</option><option>女</option><option>其他</option></select></div>
-                        <div><label className="block text-sm font-medium">在读年级/职业</label><input type="text" name="grade" value={formData.grade} onChange={handleChange} className="w-full p-2 border rounded-md" /></div>
-                        <div><label className="block text-sm font-medium">性取向</label><input type="text" name="sexualOrientation" value={formData.sexualOrientation} onChange={handleChange} className="w-full p-2 border rounded-md" /></div>
-                        <div><label className="block text-sm font-medium">联系方式</label><input type="text" name="contact" value={formData.contact} onChange={handleChange} className="w-full p-2 border rounded-md" /></div>
-                        <div><label className="block text-sm font-medium">转介绍来源</label><select name="referredBy" value={formData.referredBy || ''} onChange={handleChange} className="w-full p-2 border rounded-md"><option value="">无</option>{potentialReferrers.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</select></div>
-                        <div><label className="block text-sm font-medium">心理状态评分(1-10)</label><select name="mentalStateScore" value={formData.mentalStateScore} onChange={handleChange} className="w-full p-2 border rounded-md">{[...Array(10).keys()].map(i => <option key={i+1} value={i+1}>{i+1}</option>)}</select></div>
-                        <div className="md:col-span-2"><label className="block text-sm font-medium">既往病史</label><textarea name="historyOfIllness" value={formData.historyOfIllness} onChange={handleChange} rows="2" className="w-full p-2 border rounded-md" ></textarea></div>
-                        <div className="md:col-span-2"><label className="block text-sm font-medium">残障情况</label><input type="text" name="disabilityStatus" value={formData.disabilityStatus} onChange={handleChange} className="w-full p-2 border rounded-md" /></div>
-                        <div><label className="block text-sm font-medium">宗教信仰</label><input type="text" name="religiousBelief" value={formData.religiousBelief} onChange={handleChange} className="w-full p-2 border rounded-md" /></div>
-                        <div><label className="block text-sm font-medium">种族认同</label><input type="text" name="ethnicIdentity" value={formData.ethnicIdentity} onChange={handleChange} className="w-full p-2 border rounded-md" /></div>
-                        <div><label className="block text-sm font-medium">个人经济</label><input type="text" name="personalFinance" value={formData.personalFinance} onChange={handleChange} className="w-full p-2 border rounded-md" /></div>
-                        <div><label className="block text-sm font-medium">家庭经济</label><input type="text" name="familyFinance" value={formData.familyFinance} onChange={handleChange} className="w-full p-2 border rounded-md" /></div>
+                {isAssignModalOpen && (
+                    <div className="custom-modal-backdrop">
+                        <div className="custom-modal-content w-full max-w-lg">
+                            <h3 className="text-xl font-semibold mb-4">选择要负责的来访者</h3>
+                            <div className="max-h-64 overflow-y-auto text-left space-y-2">
+                                {unassignedClients.length > 0 ? unassignedClients.map(client => (
+                                    <div key={client.id} className="p-2 border rounded-md flex justify-between items-center">
+                                        <span>{client.name} ({client.age}岁)</span>
+                                        <button onClick={() => handleAssignClient(client.id)} className="bg-green-600 hover:bg-green-700 text-white text-xs py-1 px-2 rounded">负责</button>
+                                    </div>
+                                )) : <p className="text-center text-gray-500">当前没有未分配的来访者。</p>}
+                            </div>
+                            <button onClick={() => setIsAssignModalOpen(false)} className="custom-modal-button bg-gray-500 hover:bg-gray-600">关闭</button>
+                        </div>
                     </div>
-                    <div className="flex justify-end space-x-3 pt-4 border-t mt-6">
-                        <button type="button" onClick={onCancel} className="px-4 py-2 bg-gray-200 hover:bg-gray-300 rounded-md border">取消</button>
-                        <button type="submit" className="px-4 py-2 text-white bg-blue-600 hover:bg-blue-700 rounded-md flex items-center shadow-sm">
-                            <span className="mr-2">💾</span>{clientToEdit ? '保存更改' : '添加来访者'}
-                        </button>
-                    </div>
-                </form>
+                )}
+
+                <div className="flex justify-between items-center mb-6 pb-4 border-b"><h2 className="text-2xl font-semibold text-gray-700 flex items-center"><span className="mr-3 text-2xl">👥</span>{title}</h2><button onClick={handleButtonClick} className="bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2 px-4 rounded-lg flex items-center shadow-sm"><span className="mr-2">➕</span>{buttonText}</button></div>
+                <input type="text" placeholder="搜索来访者姓名..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="w-full p-3 mb-4 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"/>
+                {filteredClients.length > 0 ? (
+                    <ul className="space-y-3">{filteredClients.map(client => (<li key={client.id} onClick={() => onSelectClient(client)} className="bg-gray-50 hover:bg-blue-50 border rounded-lg p-4 cursor-pointer flex justify-between items-center transition-all duration-200 hover:shadow-md"><div><p className="text-lg font-medium text-blue-700">{client.name} <span className="text-sm text-gray-500">({client.gender}, {client.age}岁)</span></p><p className="text-sm text-gray-600">加入日期: {client.joinDate}</p></div><span className="text-gray-400 font-bold">❯</span></li>))}</ul>
+                ) : <p className="text-center text-gray-500 py-8">暂无匹配的来访者。点击“{buttonText}”开始。</p>}
             </div>
         );
     };
 
-    const ClientDetailView = ({ client, allClients, onUpdateClient, onDeleteClient, globalLoadingMessage, setGlobalLoadingMessage, showAlert, isManager }) => {
-        const { useState } = React;
-        const [isEditing, setIsEditing] = useState(false);
+    const ClientForm = ({ onSave, onCancel, clientToEdit, allClients, isManagerView }) => {
+      const { useState } = React;
+      const [formData, setFormData] = useState({
+        name: clientToEdit?.name || '', age: clientToEdit?.age || '', gender: clientToEdit?.gender || '未透露',
+        grade: clientToEdit?.grade || '', sexualOrientation: clientToEdit?.sexualOrientation || '',
+        contact: clientToEdit?.contact || '', referredBy: clientToEdit?.referredBy || '',
+        historyOfIllness: clientToEdit?.historyOfIllness || '', mentalStateScore: clientToEdit?.mentalStateScore || '5',
+        disabilityStatus: clientToEdit?.disabilityStatus || '', religiousBelief: clientToEdit?.religiousBelief || '',
+        ethnicIdentity: clientToEdit?.ethnicIdentity || '', personalFinance: clientToEdit?.personalFinance || '',
+        familyFinance: clientToEdit?.familyFinance || '',
+        username: clientToEdit?.username || '',
+      });
+      const [password, setPassword] = useState('');
+      const handleChange = (e) => { const { name, value } = e.target; setFormData(prev => ({ ...prev, [name]: value })); };
+      
+      const handleSubmit = (e) => {
+        e.preventDefault(); 
+        if (!formData.name.trim() || !formData.age) { alert('姓名和年龄为必填项。'); return; }
+        if (isManagerView && !formData.username.trim()) { alert('必须为来访者设置一个用户名。'); return; }
+        if (isManagerView && !clientToEdit && !password) { alert('为新来访者设置初始密码。'); return; }
 
-        if (isEditing) {
-            return <ClientForm
-                        clientToEdit={client}
-                        allClients={allClients}
-                        onSave={(clientData) => {
-                            onUpdateClient({ ...client, ...clientData }, true);
-                            setIsEditing(false);
-                        }}
-                        onCancel={() => setIsEditing(false)}
-                        isManager={isManager}
-                    />
-        }
-
-        return (
-            <div className="bg-white p-6 rounded-lg shadow-md animate-fadeIn">
-                <div className="flex flex-col md:flex-row justify-between md:items-center mb-4 pb-4 border-b gap-4">
-                    <h2 className="text-2xl font-semibold text-gray-700 flex items-center"><span className="mr-3 text-3xl">👤</span>{client.name} - 档案中心</h2>
-                    <div>
-                        <button onClick={() => setIsEditing(true)} className="text-sm font-medium text-blue-600 hover:text-blue-800 mr-4 flex items-center"><span className="mr-1">✏️</span>编辑</button>
-                        {isManager && <button onClick={() => {if(window.confirm('确定要删除此来访者吗？此操作不可撤销。')) {onDeleteClient(client.id)}}} className="text-sm font-medium text-red-600 hover:text-red-800 flex items-center"><span className="mr-1">🗑️</span>删除</button>}
-                    </div>
-                </div>
-                <ClientProfileTabs
-                    client={client}
-                    allClients={allClients}
-                    onUpdateClient={onUpdateClient}
-                    globalLoadingMessage={globalLoadingMessage}
-                    setGlobalLoadingMessage={setGlobalLoadingMessage}
-                    showAlert={showAlert}
-                />
+        const clientData = { ...formData, age: parseInt(formData.age), referredBy: formData.referredBy || null };
+        onSave(clientData, password);
+      };
+      
+      const potentialReferrers = allClients ? allClients.filter(c => c.id !== clientToEdit?.id) : [];
+      
+      return (
+        <div className="bg-white p-6 rounded-lg shadow-md animate-fadeIn">
+            <div className="flex justify-between items-center mb-6 pb-4 border-b">
+                <h3 className="text-2xl font-semibold text-gray-700">{clientToEdit ? '编辑' : '添加'}来访者信息</h3>
+                <button onClick={onCancel} className="text-sm font-medium text-gray-600 hover:text-gray-900">← 返回</button>
             </div>
-        );
+            <form onSubmit={handleSubmit} className="space-y-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div><label className="block text-sm font-medium">姓名 <span className="text-red-500">*</span></label><input type="text" name="name" value={formData.name} onChange={handleChange} required className="w-full p-2 border rounded-md" /></div>
+                <div><label className="block text-sm font-medium">年龄 <span className="text-red-500">*</span></label><input type="number" name="age" value={formData.age} onChange={handleChange} required className="w-full p-2 border rounded-md" /></div>
+                {isManagerView && <>
+                  <div><label className="block text-sm font-medium">用户名 (用于登录) <span className="text-red-500">*</span></label><input type="text" name="username" value={formData.username} onChange={handleChange} required className="w-full p-2 border rounded-md" disabled={!!clientToEdit} /></div>
+                  <div><label className="block text-sm font-medium">密码 {clientToEdit ? '(留空即不修改)' : <span className="text-red-500">*</span>}</label><input type="password" value={password} onChange={e => setPassword(e.target.value)} className="w-full p-2 border rounded-md" /></div>
+                </>}
+                <div><label className="block text-sm font-medium">性别</label><select name="gender" value={formData.gender} onChange={handleChange} className="w-full p-2 border rounded-md"><option>未透露</option><option>男</option><option>女</option><option>其他</option></select></div>
+                <div><label className="block text-sm font-medium">在读年级/职业</label><input type="text" name="grade" value={formData.grade} onChange={handleChange} className="w-full p-2 border rounded-md" /></div>
+                <div><label className="block text-sm font-medium">性取向</label><input type="text" name="sexualOrientation" value={formData.sexualOrientation} onChange={handleChange} className="w-full p-2 border rounded-md" /></div>
+                <div><label className="block text-sm font-medium">联系方式</label><input type="text" name="contact" value={formData.contact} onChange={handleChange} className="w-full p-2 border rounded-md" /></div>
+                <div><label className="block text-sm font-medium">转介绍来源</label><select name="referredBy" value={formData.referredBy || ''} onChange={handleChange} className="w-full p-2 border rounded-md"><option value="">无</option>{potentialReferrers.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</select></div>
+                <div><label className="block text-sm font-medium">心理状态评分(1-10)</label><select name="mentalStateScore" value={formData.mentalStateScore} onChange={handleChange} className="w-full p-2 border rounded-md">{[...Array(10).keys()].map(i => <option key={i+1} value={i+1}>{i+1}</option>)}</select></div>
+                <div className="md:col-span-2"><label className="block text-sm font-medium">既往病史</label><textarea name="historyOfIllness" value={formData.historyOfIllness} onChange={handleChange} rows="2" className="w-full p-2 border rounded-md" ></textarea></div>
+                <div className="md:col-span-2"><label className="block text-sm font-medium">残障情况</label><input type="text" name="disabilityStatus" value={formData.disabilityStatus} onChange={handleChange} className="w-full p-2 border rounded-md" /></div>
+                <div><label className="block text-sm font-medium">宗教信仰</label><input type="text" name="religiousBelief" value={formData.religiousBelief} onChange={handleChange} className="w-full p-2 border rounded-md" /></div>
+                <div><label className="block text-sm font-medium">种族认同</label><input type="text" name="ethnicIdentity" value={formData.ethnicIdentity} onChange={handleChange} className="w-full p-2 border rounded-md" /></div>
+                <div><label className="block text-sm font-medium">个人经济</label><input type="text" name="personalFinance" value={formData.personalFinance} onChange={handleChange} className="w-full p-2 border rounded-md" /></div>
+                <div><label className="block text-sm font-medium">家庭经济</label><input type="text" name="familyFinance" value={formData.familyFinance} onChange={handleChange} className="w-full p-2 border rounded-md" /></div>
+              </div>
+              <div className="flex justify-end space-x-3 pt-4 border-t mt-6">
+                  <button type="button" onClick={onCancel} className="px-4 py-2 bg-gray-200 hover:bg-gray-300 rounded-md border">取消</button>
+                  <button type="submit" className="px-4 py-2 text-white bg-blue-600 hover:bg-blue-700 rounded-md flex items-center shadow-sm">
+                    <span className="mr-2">💾</span>{clientToEdit ? '保存更改' : '添加来访者'}
+                  </button>
+              </div>
+            </form>
+        </div>
+      );
+    };
+
+    const ClientDetailView = ({ client, allClients, onUpdateClient, onDeleteClient, globalLoadingMessage, setGlobalLoadingMessage, showAlert, onBack, isManagerView = false }) => {
+      const { useState } = React;
+      const [isEditing, setIsEditing] = useState(false);
+      
+      if (isEditing) {
+          return <ClientForm 
+            clientToEdit={client}
+            allClients={allClients}
+            onSave={(clientData) => {
+                onUpdateClient({ ...client, ...clientData });
+                setIsEditing(false);
+            }}
+            onCancel={() => setIsEditing(false)}
+            isManagerView={isManagerView}
+          />
+      }
+
+      return (
+        <div className="bg-white p-6 rounded-lg shadow-md animate-fadeIn">
+          <div className="flex flex-col md:flex-row justify-between md:items-center mb-4 pb-4 border-b gap-4">
+            <div className="flex items-center">
+              {isManagerView && <button onClick={onBack} className="text-sm font-medium text-gray-600 hover:text-gray-900 mr-4">← 返回列表</button>}
+              <h2 className="text-2xl font-semibold text-gray-700 flex items-center"><span className="mr-3 text-3xl">👤</span>{client.name} - 档案中心</h2>
+            </div>
+            <div>
+              <button onClick={() => setIsEditing(true)} className="text-sm font-medium text-blue-600 hover:text-blue-800 mr-4 flex items-center"><span className="mr-1">✏️</span>编辑</button>
+              {isManagerView && <button onClick={() => {if(window.confirm('确定要删除此来访者吗？此操作不可撤销。')) {onDeleteClient(client.id)}}} className="text-sm font-medium text-red-600 hover:text-red-800 flex items-center"><span className="mr-1">🗑️</span>删除</button>}
+            </div>
+          </div>
+          <ClientProfileTabs client={client} allClients={allClients} onUpdateClient={onUpdateClient} globalLoadingMessage={globalLoadingMessage} setGlobalLoadingMessage={setGlobalLoadingMessage} showAlert={showAlert} />
+        </div>
+      );
     };
 
     const ClientProfileTabs = ({ client, allClients, onUpdateClient, globalLoadingMessage, setGlobalLoadingMessage, showAlert }) => {
         const { useState, useRef } = React;
         const [activeTab, setActiveTab] = useState('profile');
-        const tabs = [
-            { id: 'profile', label: '档案与会话', icon: '👤' },
-            { id: 'conceptualization', label: 'AI个案概念化', icon: '📜' },
-            { id: 'analysis', label: '来访者评估', icon: '📊' },
-            { id: 'supervision', label: 'AI督导', icon: '🔬' }
-        ];
-
+        const tabs = [{ id: 'profile', label: '档案与会话', icon: '👤' }, { id: 'conceptualization', label: 'AI个案概念化', icon: '📜' },{ id: 'analysis', label: '来访者评估', icon: '📊' }, { id: 'supervision', label: 'AI督导', icon: '🔬' }];
+      
         const readFileAsText = (file) => {
             return new Promise((resolve, reject) => {
                 const reader = new FileReader();
@@ -1264,12 +1399,12 @@
                 reader.readAsText(file, 'UTF-8');
             });
         };
-
+      
         const triggerAiGeneration = async (currentClient, sessionId, transcriptContent, transcriptName) => {
             setGlobalLoadingMessage(`正在为 ${currentClient.name} 生成AI报告...`);
             const session = currentClient.sessions.find(s => s.id === sessionId);
             if (!session) return;
-
+            
             try {
                 const clientInfoForPrompt = { ...currentClient };
                 delete clientInfoForPrompt.sessions;
@@ -1297,8 +1432,10 @@
                 updatedClient.sessions[sIndex].transcript = { name: transcriptName, content: transcriptContent };
                 updatedClient.sessions[sIndex].conceptualization = conceptualization;
                 updatedClient.sessions[sIndex].assessment = assessment;
+                
                 onUpdateClient(updatedClient);
                 showAlert('AI报告已成功生成！');
+
             } catch (error) {
                 showAlert(`AI报告生成失败: ${error.message}`);
             } finally {
@@ -1306,273 +1443,193 @@
             }
         };
 
-        const handleAddSession = (newSessionData) => {
-            const newSession = {
-                id: `session-${client.id}-${Date.now()}`,
-                ...newSessionData,
-                transcript: null,
-                conceptualization: { status: 'Pending' },
-                assessment: { status: 'Pending' },
-                supervision: { status: 'Pending', conceptualizationUploaded: null, assessmentUploaded: null, content: null }
-            };
-            onUpdateClient({ ...client, sessions: [...(client.sessions || []), newSession] });
-        };
-        
-        const handleFileUpload = async (sessionId, file) => {
-            try {
-                const content = await readFileAsText(file);
-                const sessionIndex = client.sessions.findIndex(s => s.id === sessionId);
-                if (sessionIndex === -1) return;
-                
-                let updatedClient = JSON.parse(JSON.stringify(client));
-                updatedClient.sessions[sessionIndex].transcript = { name: file.name, content: content };
-                
-                onUpdateClient(updatedClient, (finalUpdatedClient) => {
-                    triggerAiGeneration(finalUpdatedClient, sessionId, content, file.name);
-                });
-            } catch(e) {
-                showAlert(`读取文件失败: ${e.message}`);
-            }
-        };
-        
-        const handleSupervisionFileUploaded = async (sessionId, fileType, file) => {
-            try {
-                const fileContent = await readFileAsText(file);
-                const sessionIndex = client.sessions.findIndex(s => s.id === sessionId);
-                if(sessionIndex === -1) return;
-                
-                let updatedClient = JSON.parse(JSON.stringify(client));
-                updatedClient.sessions[sessionIndex].supervision[fileType + 'Uploaded'] = { name: file.name, content: fileContent };
+      const handleAddSession = (newSessionData) => {
+        const newSession = { id: `session-${client.id}-${Date.now()}`, ...newSessionData, transcript: null, conceptualization: { status: 'Pending' }, assessment: { status: 'Pending' }, supervision: { status: 'Pending', conceptualizationUploaded: null, assessmentUploaded: null, content: null } };
+        onUpdateClient({ ...client, sessions: [...(client.sessions || []), newSession] });
+      };
 
-                onUpdateClient(updatedClient, (finalUpdatedClient) => {
-                    const finalSession = finalUpdatedClient.sessions.find(s => s.id === sessionId);
-                    if (finalSession.supervision.conceptualizationUploaded && finalSession.supervision.assessmentUploaded && finalSession.supervision.status !== 'Complete' && finalSession.supervision.status !== 'Processing') {
-                        triggerSupervisionGeneration(finalUpdatedClient, sessionId);
-                    }
-                });
-            } catch (e) {
-                showAlert(`读取督导文件失败: ${e.message}`);
-            }
-        };
-        
-        const triggerSupervisionGeneration = async (clientForSupervision, sessionId) => {
-            setGlobalLoadingMessage(`正在为 ${clientForSupervision.name} 生成最终督导报告...`);
-            const session = clientForSupervision.sessions.find(s => s.id === sessionId);
-            if (!session) return;
-            try {
-                const clientInfoForPrompt = { ...clientForSupervision };
-                delete clientInfoForPrompt.sessions;
-                
-                const response = await fetch('/api/ai/supervision', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({
-                        client_info: clientInfoForPrompt,
-                        transcript_content: session.transcript.content,
-                        conceptualization_content: session.supervision.conceptualizationUploaded.content,
-                        assessment_content: session.supervision.assessmentUploaded.content
-                    })
-                });
-                
-                if (!response.ok) throw new Error("AI督导报告生成失败");
-                const supervisionData = await response.json();
-                
-                const finalClient = JSON.parse(JSON.stringify(clientForSupervision));
-                const sIndex = finalClient.sessions.findIndex(s => s.id === sessionId);
-                finalClient.sessions[sIndex].supervision = {
-                    ...finalClient.sessions[sIndex].supervision,
-                    ...supervisionData.supervision
-                };
-                onUpdateClient(finalClient);
-                showAlert('AI督导报告已成功生成！');
-            } catch(error) {
-                showAlert(`AI督导报告生成失败: ${error.message}`);
-            } finally {
-                setGlobalLoadingMessage('');
-            }
-        };
+      const handleFileUpload = async (sessionId, file) => {
+        try {
+            const content = await readFileAsText(file);
+            const sessionIndex = client.sessions.findIndex(s => s.id === sessionId);
+            if (sessionIndex === -1) return;
+            let updatedClient = JSON.parse(JSON.stringify(client));
+            updatedClient.sessions[sessionIndex].transcript = { name: file.name, content: content };
+            
+            onUpdateClient(updatedClient);
+            triggerAiGeneration(updatedClient, sessionId, content, file.name);
+
+        } catch(e) {
+            showAlert(`读取文件失败: ${e.message}`);
+        }
+      };
+
+      const handleSupervisionFileUploaded = async (sessionId, fileType, file) => {
+          try {
+              const fileContent = await readFileAsText(file);
+              const sessionIndex = client.sessions.findIndex(s => s.id === sessionId);
+              if (sessionIndex === -1) return;
+
+              let updatedClient = JSON.parse(JSON.stringify(client));
+              updatedClient.sessions[sessionIndex].supervision[fileType + 'Uploaded'] = { name: file.name, content: fileContent };
+              onUpdateClient(updatedClient);
+
+              const finalSession = updatedClient.sessions.find(s => s.id === sessionId);
+              if (finalSession.supervision.conceptualizationUploaded && finalSession.supervision.assessmentUploaded && finalSession.supervision.status !== 'Complete' && finalSession.supervision.status !== 'Processing') {
+                  triggerSupervisionGeneration(updatedClient, sessionId);
+              }
+
+          } catch (e) {
+              showAlert(`读取督导文件失败: ${e.message}`);
+          }
+      };
+      
+      const triggerSupervisionGeneration = async (clientForSupervision, sessionId) => {
+          setGlobalLoadingMessage(`正在为 ${clientForSupervision.name} 生成最终督导报告...`);
+          const session = clientForSupervision.sessions.find(s => s.id === sessionId);
+          if (!session) return;
+
+          try {
+              const clientInfoForPrompt = { ...clientForSupervision };
+              delete clientInfoForPrompt.sessions;
+
+              const response = await fetch('/api/ai/supervision', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    client_info: clientInfoForPrompt,
+                    transcript_content: session.transcript.content,
+                    conceptualization_content: session.supervision.conceptualizationUploaded.content,
+                    assessment_content: session.supervision.assessmentUploaded.content
+                })
+              });
+
+              if (!response.ok) throw new Error("AI督导报告生成失败");
+
+              const supervisionData = await response.json();
+              
+              const finalClient = JSON.parse(JSON.stringify(clientForSupervision));
+              const sIndex = finalClient.sessions.findIndex(s => s.id === sessionId);
+              finalClient.sessions[sIndex].supervision = { ...finalClient.sessions[sIndex].supervision, ...supervisionData.supervision };
+              onUpdateClient(finalClient);
+              showAlert('AI督导报告已成功生成！');
+          } catch(error) {
+              showAlert(`AI督导报告生成失败: ${error.message}`);
+          } finally {
+              setGlobalLoadingMessage('');
+          }
+      };
 
         const renderTabContent = () => {
             const isLoading = !!globalLoadingMessage;
             switch (activeTab) {
-                case 'profile':
-                    return <ClientProfileTab client={client} allClients={allClients} onAddSession={handleAddSession} onFileUpload={handleFileUpload} isAiLoading={isLoading} />;
-                case 'conceptualization':
-                    return <ReportDisplayTab client={client} reportType="conceptualization" title="AI个案概念化" themeColor="indigo" />;
-                case 'analysis':
-                    return <ReportDisplayTab client={client} reportType="assessment" title="来访者评估" themeColor="green" />;
-                case 'supervision':
-                    return <SupervisionReportTab client={client} onSupervisionFileUploaded={handleSupervisionFileUploaded} isAiLoading={isLoading} />;
-                default:
-                    return null;
+            case 'profile': return <ClientProfileTab client={client} allClients={allClients} onAddSession={handleAddSession} onFileUpload={handleFileUpload} isAiLoading={isLoading} />;
+            case 'conceptualization': return <ReportDisplayTab client={client} reportType="conceptualization" title="AI个案概念化" themeColor="indigo" />;
+            case 'analysis': return <ReportDisplayTab client={client} reportType="assessment" title="来访者评估" themeColor="green" />;
+            case 'supervision': return <SupervisionReportTab client={client} onSupervisionFileUploaded={handleSupervisionFileUploaded} isAiLoading={isLoading} />;
+            default: return null;
             }
         };
 
         return (
             <div>
-                <div className="border-b border-gray-200">
-                    <nav className="-mb-px flex space-x-6 overflow-x-auto">
-                        {tabs.map(tab => (
-                            <button
-                                key={tab.id}
-                                onClick={() => setActiveTab(tab.id)}
-                                className={`flex-shrink-0 whitespace-nowrap py-3 px-1 border-b-2 font-medium text-sm flex items-center ${activeTab === tab.id ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'}`}
-                            >
-                                <span className="mr-2">{tab.icon}</span>{tab.label}
-                            </button>
-                        ))}
-                    </nav>
-                </div>
+                 <div className="border-b border-gray-200"><nav className="-mb-px flex space-x-6 overflow-x-auto">{tabs.map(tab => <button key={tab.id} onClick={() => setActiveTab(tab.id)} className={`flex-shrink-0 whitespace-nowrap py-3 px-1 border-b-2 font-medium text-sm flex items-center ${activeTab === tab.id ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'}`}><span className="mr-2">{tab.icon}</span>{tab.label}</button>)}</nav></div>
                 <div className="pt-6">{renderTabContent()}</div>
             </div>
         )
     }
 
     const ClientProfileTab = ({ client, allClients, onAddSession, onFileUpload, isAiLoading }) => {
-        const { useState, useRef } = React;
-        const [showAddSession, setShowAddSession] = useState(false);
-        const [newSessionDate, setNewSessionDate] = useState(new Date().toISOString().split('T')[0]);
+      const { useState, useRef } = React;
+      const [showAddSession, setShowAddSession] = useState(false);
+      const [newSessionDate, setNewSessionDate] = useState(new Date().toISOString().split('T')[0]);
+      const handleCreateSession = () => { if (!newSessionDate) return; onAddSession({ date: newSessionDate, summary: `关于 ${newSessionDate} 的咨询` }); setShowAddSession(false); };
+      
+      const SessionCard = ({ session }) => {
+        const fileInputRef = useRef(null);
+        const status = session.conceptualization?.status;
+        const colorMap = { Pending: 'yellow', Processing: 'blue', Complete: 'green', Error: 'red' };
+        const statusColor = colorMap[status] || 'gray';
 
-        const handleCreateSession = () => {
-            if (!newSessionDate) return;
-            onAddSession({ date: newSessionDate, summary: `关于 ${newSessionDate} 的咨询` });
-            setShowAddSession(false);
+        const handleFileSelect = (event) => {
+            const file = event.target.files[0];
+            if (file) onFileUpload(session.id, file);
         };
-
-        const SessionCard = ({ session }) => {
-            const fileInputRef = useRef(null);
-            const status = session.conceptualization?.status;
-            const colorMap = { Pending: 'yellow', Processing: 'blue', Complete: 'green', Error: 'red' };
-            const statusColor = colorMap[status] || 'gray';
-            
-            const handleFileSelect = (event) => {
-                const file = event.target.files[0];
-                if (file) onFileUpload(session.id, file);
-            };
-
-            return (
-                <div className={`p-4 bg-white rounded-lg border border-gray-200 shadow-sm transition-all ${status === 'Processing' && 'animate-pulse'}`}>
-                    <div className="flex justify-between items-start">
-                        <p className="font-semibold text-gray-800">咨询日期: {session.date}</p>
-                        {session.transcript && <div className={`text-xs font-medium px-2 py-0.5 rounded-full bg-${statusColor}-100 text-${statusColor}-800`}>报告状态: {status}</div>}
-                    </div>
-                    <div className="mt-3 p-3 bg-gray-50 rounded-md text-center">
-                        <p className="text-sm font-medium text-gray-600">咨询逐字稿</p>
-                        {session.transcript ? (
-                            <div className="text-green-600 mt-1 flex items-center justify-center gap-2">
-                                <span className="text-xl">✅</span>
-                                <p className="text-xs break-all font-mono">{session.transcript.name}</p>
-                            </div>
-                        ) : (
-                            <>
-                                <input type="file" ref={fileInputRef} onChange={handleFileSelect} className="hidden" accept=".txt,.md"/>
-                                <button onClick={() => fileInputRef.current.click()} disabled={isAiLoading} className="mt-1 text-xs bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-1 px-3 rounded shadow-sm disabled:opacity-50 disabled:cursor-not-allowed">上传并生成AI报告</button>
-                            </>
-                        )}
-                    </div>
-                </div>
-            );
-        }
-
-        const referrer = client.referredBy ? allClients.find(c => c.id === client.referredBy) : null;
-        const referredList = client.referredClients?.map(id => allClients.find(c => c.id === id)).filter(Boolean);
-
         return (
-            <div className="space-y-6">
-                <div className="p-4 bg-gray-50 rounded-lg border">
-                    <h3 className="text-lg font-semibold text-gray-700 mb-3 flex items-center"><span className="mr-2">ℹ️</span>基本信息</h3>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-x-6 gap-y-4 text-sm">
-                        <p><strong>姓名:</strong> {client.name}</p>
-                        <p><strong>年龄:</strong> {client.age} 岁</p>
-                        <p><strong>性别:</strong> {client.gender}</p>
-                        <p><strong>职业/年级:</strong> {client.grade || '未提供'}</p>
-                        <p><strong>性取向:</strong> {client.sexualOrientation || '未提供'}</p>
-                        <p><strong>联系方式:</strong> {client.contact || '未提供'}</p>
-                        <p><strong>转介绍来源:</strong> {referrer ? referrer.name : '无'}</p>
-                        <p><strong>已转介绍:</strong> {referredList?.length > 0 ? referredList.map(c => c.name).join(', ') : '无'}</p>
-                        <p><strong>心理状态评分:</strong> {client.mentalStateScore}/10</p>
-                        <p className="md:col-span-3"><strong>既往病史:</strong> {client.historyOfIllness || '未提供'}</p>
-                        <p className="md:col-span-3"><strong>残障情况:</strong> {client.disabilityStatus || '未提供'}</p>
-                        <p><strong>宗教信仰:</strong> {client.religiousBelief || '未提供'}</p>
-                        <p><strong>种族认同:</strong> {client.ethnicIdentity || '未提供'}</p>
-                        <p><strong>个人经济:</strong> {client.personalFinance || '未提供'}</p>
-                        <p><strong>家庭经济:</strong> {client.familyFinance || '未提供'}</p>
-                    </div>
+            <div className={`p-4 bg-white rounded-lg border border-gray-200 shadow-sm transition-all ${status === 'Processing' && 'animate-pulse'}`}>
+                <div className="flex justify-between items-start">
+                    <p className="font-semibold text-gray-800">咨询日期: {session.date}</p>
+                    {session.transcript && <div className={`text-xs font-medium px-2 py-0.5 rounded-full bg-${statusColor}-100 text-${statusColor}-800`}>报告状态: {status}</div>}
                 </div>
-                <div>
-                    <div className="flex justify-between items-center mb-3">
-                        <h3 className="text-lg font-semibold text-gray-700 flex items-center"><span className="mr-2">📅</span>咨询会话工作流</h3>
-                        <button onClick={() => setShowAddSession(true)} className="text-sm bg-blue-600 hover:bg-blue-700 text-white font-semibold py-1 px-3 rounded-md shadow-sm">添加新会话</button>
-                    </div>
-                    {showAddSession && (
-                        <div className="p-4 mb-4 bg-blue-50 border rounded-lg flex items-center gap-4 animate-fadeIn">
-                            <input type="date" value={newSessionDate} onChange={e => setNewSessionDate(e.target.value)} className="p-2 border rounded-md"/>
-                            <button onClick={handleCreateSession} className="bg-blue-500 hover:bg-blue-600 text-white py-2 px-4 rounded-md shadow-sm">创建</button>
-                            <button onClick={() => setShowAddSession(false)} className="text-gray-600">取消</button>
-                        </div>
+                <div className="mt-3 p-3 bg-gray-50 rounded-md text-center">
+                    <p className="text-sm font-medium text-gray-600">咨询逐字稿</p>
+                    {session.transcript ? (<div className="text-green-600 mt-1 flex items-center justify-center gap-2"><span className="text-xl">✅</span><p className="text-xs break-all font-mono">{session.transcript.name}</p></div>) : (
+                        <>
+                            <input type="file" ref={fileInputRef} onChange={handleFileSelect} className="hidden" accept=".txt,.md"/>
+                            <button onClick={() => fileInputRef.current.click()} disabled={isAiLoading} className="mt-1 text-xs bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-1 px-3 rounded shadow-sm disabled:opacity-50 disabled:cursor-not-allowed">上传并生成AI报告</button>
+                        </>
                     )}
-                    <div className="space-y-4">
-                        {client.sessions?.length > 0 ? [...client.sessions].reverse().map(session => <SessionCard key={session.id} session={session} />) : <p className="text-center text-gray-500 py-4">暂无咨询会话记录。</p>}
-                    </div>
                 </div>
             </div>
         );
+      }
+      const referrer = client.referredBy && allClients ? allClients.find(c => c.id === client.referredBy) : null;
+      const referredList = client.referredClients && allClients ? client.referredClients.map(id => allClients.find(c => c.id === id)).filter(Boolean) : [];
+      return (
+        <div className="space-y-6">
+            <div className="p-4 bg-gray-50 rounded-lg border">
+                <h3 className="text-lg font-semibold text-gray-700 mb-3 flex items-center"><span className="mr-2">ℹ️</span>基本信息</h3>
+                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-x-6 gap-y-4 text-sm">
+                    <p><strong>姓名:</strong> {client.name}</p><p><strong>年龄:</strong> {client.age} 岁</p><p><strong>性别:</strong> {client.gender}</p>
+                    <p><strong>职业/年级:</strong> {client.grade || '未提供'}</p><p><strong>性取向:</strong> {client.sexualOrientation || '未提供'}</p><p><strong>联系方式:</strong> {client.contact || '未提供'}</p>
+                    <p><strong>转介绍来源:</strong> {referrer ? referrer.name : '无'}</p><p><strong>已转介绍:</strong> {referredList?.length > 0 ? referredList.map(c => c.name).join(', ') : '无'}</p><p><strong>心理状态评分:</strong> {client.mentalStateScore}/10</p>
+                    <p className="md:col-span-3"><strong>既往病史:</strong> {client.historyOfIllness || '未提供'}</p>
+                    <p className="md:col-span-3"><strong>残障情况:</strong> {client.disabilityStatus || '未提供'}</p>
+                    <p><strong>宗教信仰:</strong> {client.religiousBelief || '未提供'}</p><p><strong>种族认同:</strong> {client.ethnicIdentity || '未提供'}</p>
+                    <p><strong>个人经济:</strong> {client.personalFinance || '未提供'}</p><p><strong>家庭经济:</strong> {client.familyFinance || '未提供'}</p>
+                </div>
+            </div>
+            <div>
+                <div className="flex justify-between items-center mb-3"><h3 className="text-lg font-semibold text-gray-700 flex items-center"><span className="mr-2">📅</span>咨询会话工作流</h3><button onClick={() => setShowAddSession(true)} className="text-sm bg-blue-600 hover:bg-blue-700 text-white font-semibold py-1 px-3 rounded-md shadow-sm">添加新会话</button></div>
+                {showAddSession && (<div className="p-4 mb-4 bg-blue-50 border rounded-lg flex items-center gap-4 animate-fadeIn"><input type="date" value={newSessionDate} onChange={e => setNewSessionDate(e.target.value)} className="p-2 border rounded-md"/><button onClick={handleCreateSession} className="bg-blue-500 hover:bg-blue-600 text-white py-2 px-4 rounded-md shadow-sm">创建</button><button onClick={() => setShowAddSession(false)} className="text-gray-600">取消</button></div>)}
+                <div className="space-y-4">{client.sessions?.length > 0 ? [...client.sessions].reverse().map(session => <SessionCard key={session.id} session={session} />) : <p className="text-center text-gray-500 py-4">暂无咨询会话记录。</p>}</div>
+            </div>
+        </div>
+      );
+    };
+    
+    const downloadTextAsFile = (text, filename) => {
+        const blob = new Blob([text], {type: 'text/plain;charset=utf-8'});
+        const href = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = href;
+        link.download = filename;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(href);
     };
 
     const ReportDisplayTab = ({ client, reportType, title, themeColor }) => {
         const { useState, useEffect } = React;
         const aiSessions = (client.sessions || []).filter(s => s[reportType] && s[reportType].status !== 'Pending');
         const [selectedSession, setSelectedSession] = useState(aiSessions.length > 0 ? aiSessions.slice().reverse()[0] : null);
-
+        
         useEffect(() => {
             const sessions = (client.sessions || []).filter(s => s[reportType]?.status !== 'Pending');
-            if(sessions.length > 0 && !sessions.some(s => s.id === selectedSession?.id)) {
+            if (sessions.length > 0 && !sessions.some(s => s.id === selectedSession?.id)) {
                 setSelectedSession(sessions.slice().reverse()[0]);
             } else if (sessions.length === 0) {
                 setSelectedSession(null);
             }
         }, [client, reportType, selectedSession]);
-        
+
         const report = selectedSession ? selectedSession[reportType] : null;
 
-        const downloadTextAsFile = (content, filename) => {
-            const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
-            const link = document.createElement('a');
-            link.href = URL.createObjectURL(blob);
-            link.download = filename;
-            document.body.appendChild(link);
-            link.click();
-            document.body.removeChild(link);
-        };
-        
         return (
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                <div className="md:col-span-1 bg-gray-50 p-4 rounded-lg border">
-                    <h3 className="text-lg font-medium text-gray-700 mb-3">历史记录</h3>
-                    <ul className="space-y-2 max-h-[60vh] overflow-y-auto pr-2">
-                        {aiSessions.length === 0 ? <p className="text-sm text-gray-500 text-center py-4">暂无记录。</p> : [...aiSessions].reverse().map(session => (
-                            <li key={session.id} onClick={() => setSelectedSession(session)} className={`p-3 rounded-lg cursor-pointer border-2 ${selectedSession?.id === session.id ? `bg-${themeColor}-100 border-${themeColor}-500` : `bg-white hover:bg-gray-100 border-transparent`}`}>
-                                <p className={`font-semibold text-${themeColor}-600`}>咨询日期: {session.date}</p>
-                                <p className={`text-xs font-medium mt-1 text-${session[reportType].status === 'Complete' ? 'green-600' : 'red-600'}`}>状态: {session[reportType].status}</p>
-                            </li>
-                        ))}
-                    </ul>
-                </div>
-                <div className="md:col-span-2">
-                    <h3 className="text-lg font-medium mb-3 text-gray-700">{title}详情</h3>
-                    {report ? 
-                        <div className="p-4 bg-white border rounded-lg h-full">
-                            <div className="flex justify-between items-center mb-2">
-                                <h4 className={`font-bold text-lg text-${themeColor}-700`}>关于 {selectedSession.date} 咨询的{title}</h4>
-                                <button onClick={()=>downloadTextAsFile(report.content, `${client.name}_${selectedSession.date}_${reportType}.txt`)} className="text-xs bg-gray-600 text-white py-1 px-2 rounded hover:bg-gray-700">下载</button>
-                            </div>
-                            <div className="whitespace-pre-wrap text-gray-800 bg-gray-50 p-3 mt-3 rounded-md overflow-y-auto max-h-[55vh]">
-                                {report.content}
-                            </div>
-                        </div> : 
-                        <p className="text-gray-500 text-center pt-10">请从左侧选择记录查看。</p>
-                    }
-                </div>
+             <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                <div className="md:col-span-1 bg-gray-50 p-4 rounded-lg border"><h3 className="text-lg font-medium text-gray-700 mb-3">历史记录</h3><ul className="space-y-2 max-h-[60vh] overflow-y-auto pr-2">{aiSessions.length === 0 ? <p className="text-sm text-gray-500 text-center py-4">暂无记录。</p> : [...aiSessions].reverse().map(session => <li key={session.id} onClick={() => setSelectedSession(session)} className={`p-3 rounded-lg cursor-pointer border-2 ${selectedSession?.id === session.id ? `bg-${themeColor}-100 border-${themeColor}-500` : `bg-white hover:bg-gray-100 border-transparent`}`}><p className={`font-semibold text-${themeColor}-600`}>咨询日期: {session.date}</p><p className={`text-xs font-medium mt-1 text-${session[reportType].status === 'Complete' ? 'green-600' : 'red-600'}`}>状态: {session[reportType].status}</p></li>)}</ul></div>
+                <div className="md:col-span-2"><h3 className="text-lg font-medium mb-3 text-gray-700">{title}详情</h3>{report ? <div className="p-4 bg-white border rounded-lg h-full"><div className="flex justify-between items-center mb-2"><h4 className={`font-bold text-lg text-${themeColor}-700`}>关于 {selectedSession.date} 咨询的{title}</h4><button onClick={()=>downloadTextAsFile(report.content, `${client.name}_${selectedSession.date}_${reportType}.txt`)} className="text-xs bg-gray-600 text-white py-1 px-2 rounded hover:bg-gray-700">下载</button></div><div className="whitespace-pre-wrap text-gray-800 bg-gray-50 p-3 mt-3 rounded-md overflow-y-auto max-h-[55vh]">{report.error ? <span className="text-red-600">{report.error}</span> : report.content}</div></div> : <p className="text-gray-500 text-center pt-10">请从左侧选择记录查看。</p>}</div>
             </div>
         );
     }
@@ -1581,91 +1638,57 @@
         const { useState, useEffect, useRef } = React;
         const eligibleSessions = (client.sessions || []).filter(s => s.transcript);
         const [selectedSession, setSelectedSession] = useState(eligibleSessions.length > 0 ? eligibleSessions.slice().reverse()[0] : null);
-
-        useEffect(() => {
-            const sessions = (client.sessions || []).filter(s => s.transcript);
-            setSelectedSession(sessions.length > 0 ? sessions.slice().reverse()[0] : null);
-        }, [client]);
-
+        useEffect(() => { const sessions = (client.sessions || []).filter(s => s.transcript); setSelectedSession(sessions.length > 0 ? sessions.slice().reverse()[0] : null); }, [client]);
+        
         const SupervisionWorkflow = ({ session }) => {
             const conceptualizationInputRef = useRef(null);
             const assessmentInputRef = useRef(null);
-            
             const handleFileSelect = (event, fileType) => {
                 const file = event.target.files[0];
                 if(file) onSupervisionFileUploaded(session.id, fileType, file);
             }
+            const isReadyForGeneration = session.supervision.conceptualizationUploaded && session.supervision.assessmentUploaded;
 
             return (
                 <div className="p-4 bg-white border rounded-lg h-full space-y-4">
                     <div className="p-3 bg-gray-50 rounded-md">
                         <h4 className="text-md font-medium text-gray-700 mb-2">第1步: 上传已生成的报告（用于督导）</h4>
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                             <div>
-                                <p className="text-sm text-center mb-1">个案概念化报告</p>
-                                <button onClick={() => conceptualizationInputRef.current.click()} disabled={session.supervision.conceptualizationUploaded || session.conceptualization?.status !== 'Complete'} className="w-full text-xs bg-indigo-500 text-white py-1 px-2 rounded disabled:bg-gray-400 disabled:cursor-not-allowed">
-                                    {session.supervision.conceptualizationUploaded ? `✅ 已上传` : '上传 .txt 文件'}
-                                </button>
-                                <input type="file" ref={conceptualizationInputRef} onChange={(e) => handleFileSelect(e, 'conceptualization')} className="hidden" accept=".txt"/>
-                            </div>
-                             <div>
-                                <p className="text-sm text-center mb-1">来访者评估报告</p>
-                                <button onClick={() => assessmentInputRef.current.click()} disabled={session.supervision.assessmentUploaded || session.assessment?.status !== 'Complete'} className="w-full text-xs bg-indigo-500 text-white py-1 px-2 rounded disabled:bg-gray-400 disabled:cursor-not-allowed">
-                                    {session.supervision.assessmentUploaded ? `✅ 已上传` : '上传 .txt 文件'}
-                                </button>
-                                <input type="file" ref={assessmentInputRef} onChange={(e) => handleFileSelect(e, 'assessment')} className="hidden" accept=".txt"/>
-                            </div>
+                            <div><p className="text-sm text-center mb-1">个案概念化报告</p><button onClick={() => conceptualizationInputRef.current.click()} disabled={session.supervision.conceptualizationUploaded || session.conceptualization?.status !== 'Complete'} className="w-full text-xs bg-indigo-500 text-white py-1 px-2 rounded disabled:bg-gray-400 disabled:cursor-not-allowed">{session.supervision.conceptualizationUploaded ? `✅ 已上传` : '上传 .txt 文件'}</button><input type="file" ref={conceptualizationInputRef} onChange={(e) => handleFileSelect(e, 'conceptualization')} className="hidden" accept=".txt"/></div>
+                            <div><p className="text-sm text-center mb-1">来访者评估报告</p><button onClick={() => assessmentInputRef.current.click()} disabled={session.supervision.assessmentUploaded || session.assessment?.status !== 'Complete'} className="w-full text-xs bg-indigo-500 text-white py-1 px-2 rounded disabled:bg-gray-400 disabled:cursor-not-allowed">{session.supervision.assessmentUploaded ? `✅ 已上传` : '上传 .txt 文件'}</button><input type="file" ref={assessmentInputRef} onChange={(e) => handleFileSelect(e, 'assessment')} className="hidden" accept=".txt"/></div>
                         </div>
                         <p className="text-xs text-gray-500 mt-2">提示：请先确保初步报告已生成(状态为Complete)。上传两份报告后将自动触发最终督导报告生成。</p>
                     </div>
-
                     <div className="p-3 bg-gray-50 rounded-md">
                         <h4 className="text-md font-medium text-gray-700 mb-2">第2步: 查看最终督导报告</h4>
                         {session.supervision.status === 'Processing' && <p className="text-sm text-blue-600 animate-pulse">正在生成中...</p>}
-                        {session.supervision.status === 'Complete' ?
-                             <a href={`data:text/plain;charset=utf-8,${encodeURIComponent(session.supervision.content)}`} download={`${client.name}_${selectedSession.date}_督导报告.txt`} className="inline-block text-sm bg-green-600 hover:bg-green-700 text-white font-semibold py-2 px-4 rounded shadow-sm">下载督导报告</a> :
-                             <p className="text-sm text-gray-500">状态: {session.supervision.status === 'Pending' ? '待上传文件' : session.supervision.status}</p>
-                        }
+                        {session.supervision.status === 'Complete' ? <button onClick={()=>downloadTextAsFile(session.supervision.content, `${client.name}_${selectedSession.date}_督导报告.txt`)} className="text-sm bg-green-600 hover:bg-green-700 text-white font-semibold py-2 px-4 rounded shadow-sm">下载督导报告</button> : <p className="text-sm text-gray-500">状态: {session.supervision.status === 'Pending' ? '待上传文件' : session.supervision.status}</p>}
                         {session.supervision.status === 'Error' && <p className="text-sm text-red-600">{session.supervision.content}</p>}
                     </div>
                 </div>
             );
         };
-
         return (
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                <div className="md:col-span-1 bg-gray-50 p-4 rounded-lg border">
-                    <h3 className="text-lg font-medium text-gray-700 mb-3">会话列表</h3>
-                    <ul className="space-y-2 max-h-[60vh] overflow-y-auto pr-2">
-                        {eligibleSessions.length === 0 ? <p className="text-sm text-gray-500 text-center py-4">暂无符合条件的会话。</p> : [...eligibleSessions].reverse().map(session => (
-                            <li key={session.id} onClick={() => setSelectedSession(session)} className={`p-3 rounded-lg cursor-pointer border-2 ${selectedSession?.id === session.id ? 'bg-blue-100 border-blue-500' : 'bg-white hover:bg-gray-100 border-transparent'}`}>
-                                <p className="font-semibold text-blue-600">咨询日期: {session.date}</p>
-                                <p className={`text-xs font-medium mt-1 ${session.supervision.status === 'Complete' ? 'text-green-600' : 'text-yellow-600'}`}>督导状态: {session.supervision.status}</p>
-                            </li>
-                        ))}
-                    </ul>
-                </div>
-                <div className="md:col-span-2">
-                    <h3 className="text-lg font-medium mb-3 text-gray-700">AI督导工作流</h3>
-                    {selectedSession ? <SupervisionWorkflow session={selectedSession}/> : <p className="text-gray-500 text-center pt-10">请从左侧选择一个会话以开始督导流程。</p>}
-                </div>
+                <div className="md:col-span-1 bg-gray-50 p-4 rounded-lg border"><h3 className="text-lg font-medium text-gray-700 mb-3">会话列表</h3><ul className="space-y-2 max-h-[60vh] overflow-y-auto pr-2">{eligibleSessions.length === 0 ? <p className="text-sm text-gray-500 text-center py-4">暂无符合条件的会话。</p> : [...eligibleSessions].reverse().map(session => <li key={session.id} onClick={() => setSelectedSession(session)} className={`p-3 rounded-lg cursor-pointer border-2 ${selectedSession?.id === session.id ? 'bg-blue-100 border-blue-500' : 'bg-white hover:bg-gray-100 border-transparent'}`}><p className="font-semibold text-blue-600">咨询日期: {session.date}</p><p className={`text-xs font-medium mt-1 ${session.supervision.status === 'Complete' ? 'text-green-600' : 'text-yellow-600'}`}>督导状态: {session.supervision.status}</p></li>)}</ul></div>
+                <div className="md:col-span-2"><h3 className="text-lg font-medium mb-3 text-gray-700">AI督导工作流</h3>{selectedSession ? <SupervisionWorkflow session={selectedSession}/> : <p className="text-gray-500 text-center pt-10">请从左侧选择一个会话以开始督导流程。</p>}</div>
             </div>
         );
     };
 
     const CBTSection = ({ showAlert }) => {
-        return (
-            <div className="bg-white p-6 rounded-lg shadow-md animate-fadeIn max-w-4xl mx-auto">
-                <h2 className="text-2xl font-semibold mb-6 text-gray-700 border-b pb-3 flex items-center"><span className="text-2xl mr-3">🧠</span>辅助工具</h2>
-                <div className="text-center p-8 bg-gray-50 rounded-lg">
-                    <h3 className="text-xl font-bold text-gray-600">功能开发中</h3>
-                    <p className="mt-2 text-gray-500">此模块（如CBT练习工具）正在积极开发中，敬请期待未来的更新！</p>
-                </div>
-            </div>
-        );
+      return (
+          <div className="bg-white p-6 rounded-lg shadow-md animate-fadeIn max-w-4xl mx-auto">
+              <h2 className="text-2xl font-semibold mb-6 text-gray-700 border-b pb-3 flex items-center"><span className="text-2xl mr-3">🧠</span>辅助工具</h2>
+              <div className="text-center p-8 bg-gray-50 rounded-lg">
+                  <h3 className="text-xl font-bold text-gray-600">功能开发中</h3>
+                  <p className="mt-2 text-gray-500">此模块（如CBT练习工具）正在积极开发中，敬请期待未来的更新！</p>
+              </div>
+          </div>
+      );
     };
-
+    
     ReactDOM.createRoot(document.getElementById('root')).render(<App />);
-    </script>
+  </script>
 </body>
 </html>
