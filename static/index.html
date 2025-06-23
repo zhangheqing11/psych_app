@@ -42,7 +42,7 @@
     // Firebase Imports
     import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
     import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-    import { getFirestore, doc, onSnapshot, collection, setDoc, deleteDoc, writeBatch } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+    import { getFirestore, doc, onSnapshot, collection, setDoc, deleteDoc, writeBatch, getDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
     // --- AI Prompts (from backend file) ---
     const getConceptualizationPromptText = () => `你是一位资深的心理咨询师。根据文件中的咨询逐字稿内容以及来访的基本信息，提供个案概念化报告。报告用于辅助另一位咨询师改善自己的咨询服务质量。个案概念化整体上应遵循‘’中的步骤：
@@ -227,6 +227,7 @@
       const [appData, setAppData] = useState({ clients: [], counselors: [], appointments: [] });
       const [isLoading, setIsLoading] = useState(true);
       const [user, setUser] = useState(null);
+      const [userProfile, setUserProfile] = useState(null);
 
       const [activeSection, setActiveSection] = useState('schedule');
       const [selectedClient, setSelectedClient] = useState(null);
@@ -234,6 +235,7 @@
       const [alertInfo, setAlertInfo] = useState({ show: false, message: '' });
 
       const userId = user?.uid;
+      const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
 
       const showAlert = useCallback((message) => {
         setAlertInfo({ show: true, message });
@@ -241,14 +243,23 @@
 
       // Effect for Firebase Authentication
       useEffect(() => {
-        const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
+        const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
           setUser(currentUser);
-          if (!currentUser) {
-            setIsLoading(false); // Stop loading if no user
+          if (currentUser) {
+            const userDocRef = doc(db, "artifacts", appId, "public", "user_profiles", currentUser.uid);
+            const userDocSnap = await getDoc(userDocRef);
+            if (userDocSnap.exists()) {
+                setUserProfile(userDocSnap.data());
+            } else {
+                 setUserProfile({ username: '用户' });
+            }
+          } else {
+            setUserProfile(null);
           }
+          setIsLoading(false);
         });
         return () => unsubscribe();
-      }, [auth]);
+      }, [auth, db, appId]);
 
       // Effect for fetching data from Firestore
       useEffect(() => {
@@ -258,8 +269,7 @@
         };
 
         setIsLoading(true);
-        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
-        const docRef = doc(db, "artifacts", appId, "users", userId);
+        const docRef = doc(db, "artifacts", appId, "users", userId, "data", "main");
 
         const unsubscribe = onSnapshot(docRef, (docSnap) => {
           if (docSnap.exists()) {
@@ -270,7 +280,6 @@
                 appointments: data.appointments || []
             });
           } else {
-            // If no data exists, set initial empty structure
             setAppData({ clients: [], counselors: [], appointments: [] });
           }
           setIsLoading(false);
@@ -281,27 +290,45 @@
         });
 
         return () => unsubscribe();
-      }, [userId, db, showAlert]);
+      }, [userId, db, appId, showAlert]);
       
-      // Function to save all data to Firestore
       const saveData = useCallback(async (dataToSave) => {
           if (!userId) {
             showAlert("请先登录再保存数据。");
             return;
           }
           try {
-            const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
-            const docRef = doc(db, "artifacts", appId, "users", userId);
+            const docRef = doc(db, "artifacts", appId, "users", userId, "data", "main");
             await setDoc(docRef, dataToSave, { merge: true });
           } catch (error) {
               console.error("Failed to save data to Firestore:", error);
               showAlert("保存数据失败，请检查网络连接。");
           }
-      }, [userId, db, showAlert]);
+      }, [userId, db, appId, showAlert]);
 
-      const handleRegister = async (email, password) => {
+      const handleRegister = async (username, password) => {
+        const usernameRef = doc(db, "artifacts", appId, "public", "usernames", username);
+        const usernameSnap = await getDoc(usernameRef);
+
+        if (usernameSnap.exists()) {
+            showAlert("此用户名已被使用，请选择其他用户名。");
+            return false;
+        }
+
         try {
-            await createUserWithEmailAndPassword(auth, email, password);
+            const fakeEmail = `${username}@auth.hidden`;
+            const userCredential = await createUserWithEmailAndPassword(auth, fakeEmail, password);
+            const user = userCredential.user;
+
+            const batch = writeBatch(db);
+            const userDocRef = doc(db, "artifacts", appId, "public", "user_profiles", user.uid);
+            batch.set(userDocRef, { username: username });
+
+            const usernameDocRef = doc(db, "artifacts", appId, "public", "usernames", username);
+            batch.set(usernameDocRef, { uid: user.uid });
+
+            await batch.commit();
+            
             showAlert("注册成功！已自动登录。");
             return true;
         } catch (error) {
@@ -311,15 +338,16 @@
         }
       };
 
-      const handleLogin = async (email, password) => {
+      const handleLogin = async (username, password) => {
         try {
-            await signInWithEmailAndPassword(auth, email, password);
+            const fakeEmail = `${username}@auth.hidden`;
+            await signInWithEmailAndPassword(auth, fakeEmail, password);
             showAlert("登录成功！");
             return true;
         } catch(error) {
             console.error("Login error:", error);
             if (error.code === 'auth/user-not-found' || error.code === 'auth/wrong-password' || error.code === 'auth/invalid-credential') {
-                 showAlert('邮箱或密码错误。');
+                 showAlert('用户名或密码错误。');
                  return 'invalid_credentials';
             }
             showAlert(`登录失败: ${error.message}`);
@@ -334,8 +362,6 @@
       }
       
       const updateFirestore = (updatedData) => {
-        // This function merges the new partial data with the existing state
-        // and then saves the complete object to Firestore.
         const newState = { ...appData, ...updatedData };
         setAppData(newState);
         saveData(newState);
@@ -345,15 +371,14 @@
           let newClientsState = [...appData.clients];
           const clientIndex = newClientsState.findIndex(c => c.id === updatedClientData.id);
           
-          if (clientIndex > -1) { // Update existing
+          if (clientIndex > -1) {
               newClientsState[clientIndex] = updatedClientData;
-          } else { // Add new
+          } else {
               newClientsState.push(updatedClientData);
           }
           
           updateFirestore({ clients: newClientsState });
           
-          // Reselect the client to reflect updates in the detail view
           if (selectedClient?.id === updatedClientData.id || clientIndex === -1) {
               setSelectedClient(updatedClientData);
           }
@@ -441,7 +466,7 @@
 
       const renderSection = () => {
         if (isLoading) {
-            return <div className="text-center p-10 text-gray-600 font-semibold">正在加载数据...</div>;
+            return <div className="text-center p-10 text-gray-600 font-semibold">正在加载...</div>;
         }
         switch (activeSection) {
           case 'clientManagement':
@@ -462,7 +487,7 @@
                       setGlobalLoadingMessage={setGlobalLoadingMessage}
                       showAlert={showAlert}
                     /> : 
-                   <div className="text-center p-10 text-gray-500">请先返回来访者列表选择一位来访者。</div>;
+                   <div className="text-center p-10 text-gray-500">请先从“来访者管理”页面选择一位来访者。</div>;
           case 'cbtApplication':
             return <CBTSection showAlert={showAlert}/>;
           default:
@@ -471,7 +496,7 @@
       };
 
       if (!user) {
-          return <AuthModal onLogin={handleLogin} onRegister={handleRegister} showAlert={showAlert} />;
+          return <AuthModal onLogin={handleLogin} onRegister={handleRegister} showAlert={showAlert} db={db} />;
       }
 
       return (
@@ -502,7 +527,7 @@
                 ))}
             </nav>
             <div className="border-l pl-4 flex items-center gap-2">
-                <span className="text-xs text-gray-500 hidden lg:inline">{user.email}</span>
+                <span className="text-sm text-gray-500 hidden lg:inline">{userProfile?.username || user.email}</span>
                 <button onClick={handleLogout} className="text-sm font-medium text-gray-500 hover:text-red-600">登出</button>
             </div>
            </div>
@@ -515,28 +540,25 @@
     
     // --- Components ---
     
-    const AuthModal = ({ onLogin, onRegister, showAlert }) => {
+    const AuthModal = ({ onLogin, onRegister, showAlert, db }) => {
         const { useState } = React;
         const [mode, setMode] = useState('login'); // login or register
-        const [email, setEmail] = useState('');
+        const [username, setUsername] = useState('');
         const [password, setPassword] = useState('');
         const [confirmPassword, setConfirmPassword] = useState('');
 
         const handleLoginAttempt = async (e) => {
             e.preventDefault();
-            if (!email || !password) { showAlert('请输入邮箱和密码。'); return; }
-            const result = await onLogin(email, password);
-            if (result === 'invalid_credentials') {
-                 // The alert is already shown in the handleLogin function
-            }
+            if (!username || !password) { showAlert('请输入用户名和密码。'); return; }
+            await onLogin(username, password);
         };
         
         const handleRegisterAttempt = async (e) => {
             e.preventDefault();
-            if (!email || !password || !confirmPassword) { showAlert('请填写所有字段。'); return; }
+            if (!username || !password || !confirmPassword) { showAlert('请填写所有字段。'); return; }
             if (password.length < 6) { showAlert('密码必须至少为6个字符。'); return; }
             if (password !== confirmPassword) { showAlert('两次输入的密码不匹配！'); return; }
-            await onRegister(email, password);
+            await onRegister(username, password);
         };
 
         return (
@@ -546,7 +568,7 @@
                        <div>
                            <h2 className="text-2xl font-bold text-center text-gray-800 mb-6">登录</h2>
                            <form onSubmit={handleLoginAttempt} className="space-y-4">
-                               <div><label className="text-sm font-medium text-gray-700">邮箱</label><input type="email" value={email} onChange={e => setEmail(e.target.value)} className="w-full p-2 mt-1 border rounded-md" /></div>
+                               <div><label className="text-sm font-medium text-gray-700">用户名</label><input type="text" value={username} onChange={e => setUsername(e.target.value)} className="w-full p-2 mt-1 border rounded-md" /></div>
                                <div><label className="text-sm font-medium text-gray-700">密码</label><input type="password" value={password} onChange={e => setPassword(e.target.value)} className="w-full p-2 mt-1 border rounded-md" /></div>
                                <button type="submit" className="w-full bg-blue-600 text-white py-2 rounded-md hover:bg-blue-700 font-semibold">登录</button>
                            </form>
@@ -556,7 +578,7 @@
                        <div>
                            <h2 className="text-2xl font-bold text-center text-gray-800 mb-6">注册</h2>
                            <form onSubmit={handleRegisterAttempt} className="space-y-4">
-                               <div><label className="text-sm font-medium text-gray-700">邮箱</label><input type="email" value={email} onChange={e => setEmail(e.target.value)} className="w-full p-2 mt-1 border rounded-md" /></div>
+                               <div><label className="text-sm font-medium text-gray-700">用户名</label><input type="text" value={username} onChange={e => setUsername(e.target.value)} className="w-full p-2 mt-1 border rounded-md" /></div>
                                <div><label className="text-sm font-medium text-gray-700">密码</label><input type="password" value={password} onChange={e => setPassword(e.target.value)} className="w-full p-2 mt-1 border rounded-md" /></div>
                                <div><label className="text-sm font-medium text-gray-700">确认密码</label><input type="password" value={confirmPassword} onChange={e => setConfirmPassword(e.target.value)} className="w-full p-2 mt-1 border rounded-md" /></div>
                                <button type="submit" className="w-full bg-blue-600 text-white py-2 rounded-md hover:bg-blue-700 font-semibold">注册</button>
@@ -987,15 +1009,17 @@
         const { useState } = React;
         const [view, setView] = useState('list');
         const [searchTerm, setSearchTerm] = useState('');
+        const [clientToEdit, setClientToEdit] = useState(null);
 
         if (view === 'form') {
             return (
                 <ClientForm 
-                    onSave={(clientData, clientToEdit) => {
-                        onAddClient(clientData, clientToEdit);
+                    onSave={(clientData, isEditing) => {
+                        onAddClient(clientData, isEditing ? clientToEdit : null);
                         setView('list');
                     }}
                     onCancel={() => setView('list')}
+                    clientToEdit={clientToEdit}
                     allClients={clients}
                 />
             )
@@ -1004,7 +1028,7 @@
         const filteredClients = clients.filter(client => client.name.toLowerCase().includes(searchTerm.toLowerCase()));
         return (
             <div className="bg-white p-6 rounded-lg shadow-md animate-fadeIn">
-                <div className="flex justify-between items-center mb-6 pb-4 border-b"><h2 className="text-2xl font-semibold text-gray-700 flex items-center"><span className="mr-3 text-2xl">👥</span>来访者管理</h2><button onClick={() => setView('form')} className="bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2 px-4 rounded-lg flex items-center shadow-sm"><span className="mr-2">➕</span>添加新来访</button></div>
+                <div className="flex justify-between items-center mb-6 pb-4 border-b"><h2 className="text-2xl font-semibold text-gray-700 flex items-center"><span className="mr-3 text-2xl">👥</span>来访者管理</h2><button onClick={() => {setClientToEdit(null); setView('form');}} className="bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2 px-4 rounded-lg flex items-center shadow-sm"><span className="mr-2">➕</span>添加新来访</button></div>
                 <input type="text" placeholder="搜索来访者姓名..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="w-full p-3 mb-4 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"/>
                 {filteredClients.length > 0 ? (
                     <ul className="space-y-3">{filteredClients.map(client => (<li key={client.id} onClick={() => onSelectClient(client)} className="bg-gray-50 hover:bg-blue-50 border rounded-lg p-4 cursor-pointer flex justify-between items-center transition-all duration-200 hover:shadow-md"><div><p className="text-lg font-medium text-blue-700">{client.name} <span className="text-sm text-gray-500">({client.gender}, {client.age}岁)</span></p><p className="text-sm text-gray-600">加入日期: {client.joinDate}</p></div><span className="text-gray-400 font-bold">❯</span></li>))}</ul>
@@ -1028,7 +1052,7 @@
       const handleSubmit = (e) => {
         e.preventDefault(); if (!formData.name.trim() || !formData.age) { alert('姓名和年龄为必填项。'); return; }
         const clientData = { ...formData, age: parseInt(formData.age), referredBy: formData.referredBy || null };
-        onSave(clientData, clientToEdit);
+        onSave(clientData, !!clientToEdit);
       };
       const potentialReferrers = allClients.filter(c => c.id !== clientToEdit?.id);
       
@@ -1075,7 +1099,7 @@
             clientToEdit={client}
             allClients={allClients}
             onSave={(clientData) => {
-                onUpdateClient({ ...client, ...clientData });
+                onUpdateClient({ ...client, ...clientData }, true);
                 setIsEditing(false);
             }}
             onCancel={() => setIsEditing(false)}
