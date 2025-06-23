@@ -1,4 +1,4 @@
-# --- 部署说明 (重要) ---
+ --- 部署说明 (重要) ---
 # 1. 您的 'requirements.txt' 文件必须仅包含以下内容：
 #    Flask
 #    Flask-Cors
@@ -21,7 +21,8 @@ import logging
 import sqlite3
 import time
 import traceback
-from flask import Flask, request, jsonify, g
+# *** CRITICAL FIX: Added send_from_directory to the import list ***
+from flask import Flask, request, jsonify, g, send_from_directory
 from flask_cors import CORS
 import requests
 
@@ -45,7 +46,7 @@ def get_db():
     """获取当前请求的数据库连接。如果不存在，则创建一个。"""
     db = getattr(g, '_database', None)
     if db is None:
-        db = g._database = sqlite3.connect(DATABASE, timeout=10) # 增加超时
+        db = g._database = sqlite3.connect(DATABASE, timeout=10)
         # 使用 Row factory 使查询结果可以像字典一样通过列名访问
         db.row_factory = sqlite3.Row
     return db
@@ -109,8 +110,6 @@ def init_db():
             app.logger.info("数据库已成功初始化。")
     except sqlite3.Error as e:
         app.logger.error(f"数据库初始化失败: {e}")
-        # 如果初始化失败，这通常是严重问题，可能需要手动干预
-        # 但我们仍然让应用尝试启动
         pass
 
 
@@ -487,13 +486,8 @@ def serve_frontend(path):
         return send_from_directory(app.static_folder, 'index.html')
 
 # --- 应用启动 ---
-# 使用 before_first_request 来确保数据库在第一个请求前被初始化
-@app.before_request
-def before_first_request_func():
-    # 使用一个全局变量来确保init_db()只运行一次
-    if not hasattr(g, 'db_initialized'):
-        init_db()
-        g.db_initialized = True
+# 在应用启动时，确保数据库和表已经创建
+init_db()
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
