@@ -1,15 +1,3 @@
-# --- 部署说明 (重要) ---
-# 您的部署失败是因为缺少 'Flask-Cors' 依赖。
-# 请确保您的 'requirements.txt' 文件包含以下所有内容：
-#
-# Flask
-# Flask-Cors
-# requests
-# gunicorn
-#
-# 部署日志中的 "ModuleNotFoundError: No module named 'flask_cors'" 错误
-# 表明 'Flask-Cors' 没有被安装。请将其添加到您的 requirements.txt 文件中。
-# -------------------------
 
 # 安装必要的库: pip install Flask Flask-Cors requests gunicorn
 from flask import Flask, request, jsonify, send_from_directory
@@ -21,9 +9,8 @@ import traceback
 import logging
 
 # --- Flask 应用设置 ---
-# 定义静态文件夹的路径，使其相对于此文件的位置，这在部署时更可靠
-static_folder_path = os.path.join(os.path.dirname(__file__), 'static')
-app = Flask(__name__, static_folder=static_folder_path)
+# Flask将自动在与此文件相同的目录级别中寻找 'static' 文件夹。
+app = Flask(__name__, static_folder='static')
 CORS(app)  # 允许跨域请求
 
 # 配置日志记录以更好地进行调试
@@ -310,19 +297,16 @@ def get_supervision():
 @app.route('/<path:path>')
 def serve_frontend(path):
     # 'static' 文件夹是存放您的 index.html 和其他前端资产（如CSS, JS）的地方
+    # 如果请求的是一个存在的文件（如 an-image.png），则直接提供它
     if path != "" and os.path.exists(os.path.join(app.static_folder, path)):
-        # 如果请求的是一个存在的文件（如 an-image.png），则直接提供它
         app.logger.info(f"正在提供静态文件: {path}")
         return send_from_directory(app.static_folder, path)
     else:
         # 对于所有其他路径（如 /login, /clients, 或空路径 /），都返回 index.html
         # 这使得前端的React Router能够处理路由
         app.logger.info(f"路径 '{path}' 未找到，返回 index.html")
-        index_path = os.path.join(app.static_folder, 'index.html')
-        if not os.path.exists(index_path):
-            app.logger.error(f"严重错误: 在 {index_path} 未找到 index.html")
-            return "index.html not found!", 404
         return send_from_directory(app.static_folder, 'index.html')
+
 
 if __name__ == '__main__':
     # Gunicorn等生产服务器将使用此文件，因此debug模式应为False
