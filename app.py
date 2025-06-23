@@ -1,27 +1,9 @@
- --- 部署说明 (重要) ---
-# 1. 您的 'requirements.txt' 文件必须仅包含以下内容：
-#    Flask
-#    Flask-Cors
-#    requests
-#    gunicorn
-#
-# 2. 您的项目文件结构必须如下：
-#    / (项目根目录)
-#    ├── app.py         (此后端文件)
-#    ├── requirements.txt
-#    └── static/
-#        └── index.html (您的前端文件)
-#
-# 这个新版本使用SQLite数据库，它更稳定、更高效，并且能从根本上解决文件读写冲突问题。
-# -------------------------
-
 import os
 import json
 import logging
 import sqlite3
 import time
 import traceback
-# *** CRITICAL FIX: Added send_from_directory to the import list ***
 from flask import Flask, request, jsonify, g, send_from_directory
 from flask_cors import CORS
 import requests
@@ -486,8 +468,9 @@ def serve_frontend(path):
         return send_from_directory(app.static_folder, 'index.html')
 
 # --- 应用启动 ---
-# 在应用启动时，确保数据库和表已经创建
-init_db()
+# ** OPTIMIZATION: Use with app.app_context() for a more robust initialization **
+with app.app_context():
+    init_db()
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
