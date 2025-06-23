@@ -32,7 +32,7 @@
       font-weight: 600; cursor: pointer; transition: background-color 0.2s;
     }
     .custom-modal-button:hover { background-color: #2563EB; }
-    .time-slot:hover { background-color: #eff6ff; cursor: pointer; }
+    .time-slot { display: flex; flex-direction: column; gap: 4px; }
   </style>
 </head>
 <body class="bg-gray-100">
@@ -69,8 +69,7 @@
         setAlertInfo({ show: true, message });
       }, []);
       
-      // Fetch data when user logs in
-      useEffect(() => {
+      const fetchData = useCallback(() => {
         if (currentUser) {
           setIsLoading(true);
           const dataPath = currentUser.role === 'counselor' ? `/api/data/counselor/${currentUser.username}` : '/api/data/all';
@@ -89,17 +88,35 @@
             setIsLoading(false);
         }
       }, [currentUser]);
+      
+      useEffect(() => {
+        fetchData();
+      }, [fetchData]);
 
-      const saveData = useCallback(async (dataToSave) => {
-          if (!currentUser || currentUser.role !== 'counselor') {
-            showAlert("只有咨询师可以保存数据。");
+
+      const saveData = useCallback(async (dataToSave, isClientUpdate = false) => {
+          if (!currentUser) {
+            showAlert("请先登录。");
             return;
           }
+          
+          let url, body;
+          if (isClientUpdate) {
+             url = `/api/data/client/${currentUser.username}`;
+             body = JSON.stringify(dataToSave); // dataToSave is the updated client profile
+          } else if (currentUser.role === 'counselor') {
+             url = `/api/data/counselor/${currentUser.username}`;
+             body = JSON.stringify(dataToSave); // dataToSave is the full appData
+          } else {
+            showAlert("无权保存数据。");
+            return;
+          }
+
           try {
-            const response = await fetch(`/api/data/counselor/${currentUser.username}`, {
+            const response = await fetch(url, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify(dataToSave),
+              body: body,
             });
             if (!response.ok) {
               const err = await response.json();
@@ -123,7 +140,7 @@
                 showAlert(data.message);
                 const user = { username: data.username, role: data.role };
                 localStorage.setItem('currentUser', JSON.stringify(user));
-                window.location.reload(); // Force reload to ensure state consistency
+                window.location.reload(); 
                 return true;
             } else {
                 showAlert(data.message);
@@ -147,7 +164,7 @@
                 showAlert(data.message);
                 const user = { username: data.username, role: data.role };
                 localStorage.setItem('currentUser', JSON.stringify(user));
-                window.location.reload(); // Force reload for login
+                window.location.reload(); 
                 return true;
             } else {
                 showAlert(data.message);
@@ -162,9 +179,10 @@
       const handleLogout = () => {
           localStorage.removeItem('currentUser');
           setCurrentUser(null);
+          window.location.reload();
       }
       
-      if (isLoading) {
+      if (isLoading && !currentUser) { // Show loading only when initially checking for user
           return <div className="min-h-screen flex items-center justify-center">正在加载...</div>
       }
 
@@ -173,7 +191,7 @@
       }
       
       if (currentUser.role === 'client') {
-          return <ClientPortal user={currentUser} allData={appData} onLogout={handleLogout} />;
+          return <ClientPortal user={currentUser} allData={appData} onLogout={handleLogout} onSave={saveData} showAlert={showAlert} />;
       }
 
       // Counselor Portal
@@ -193,7 +211,7 @@
               newClientsState.push(updatedClientData);
           }
           
-          handleUpdateData({ clients: newClientsState });
+          handleUpdateData({ ...appData, clients: newClientsState });
           
           if (selectedClient?.id === updatedClientData.id || clientIndex === -1) {
               setSelectedClient(updatedClientData);
@@ -282,6 +300,9 @@
       ];
 
       const renderSection = () => {
+        if (isLoading) {
+            return <div className="text-center p-10 text-gray-600 font-semibold">正在加载...</div>;
+        }
         switch (activeSection) {
           case 'clientManagement':
             return <ClientManagementSection clients={appData.clients} onAddClient={handleAddClient} onSelectClient={handleSelectClient} />;
@@ -322,7 +343,7 @@
           <header className="bg-white shadow-sm sticky top-0 z-40"><div className="container mx-auto px-4"><div className="flex items-center justify-between h-16">
           <button onClick={() => setActiveSection('schedule')} className="flex items-center cursor-pointer">
             <span className="text-2xl mr-3">💌</span>
-            <h1 className="text-xl font-bold text-gray-800">心理咨询师助手</h1>
+            <h1 className="text-xl font-bold text-gray-800">咨询师工作台</h1>
           </button>
           <div className="flex items-center gap-4">
             <nav className="hidden md:flex items-center space-x-1">
@@ -348,6 +369,8 @@
       );
     };
     
+    // --- All Components ---
+
     const AuthModal = ({ onLogin, onRegister, showAlert }) => {
         const { useState } = React;
         const [mode, setMode] = useState('login');
@@ -401,12 +424,41 @@
         );
     };
 
-    const ClientPortal = ({ user, allData, onLogout }) => {
-        const { clients, counselors, appointments } = allData;
+    const ClientPortal = ({ user, allData, onLogout, onSave, showAlert }) => {
+        const { useState, useMemo, useEffect } = React;
+        const [isEditing, setIsEditing] = useState(false);
+        const [clientProfile, setClientProfile] = useState(null);
+
+        useEffect(() => {
+            const profile = allData.clients.find(c => c.username === user.username);
+            setClientProfile(profile);
+        }, [allData.clients, user.username]);
+
+        const assignedCounselor = clientProfile ? allData.counselors.find(c => c.assignedClientIds?.includes(clientProfile.id)) : null;
+        const clientAppointments = clientProfile ? allData.appointments.filter(a => a.clientId === clientProfile.id) : [];
+
+        const { totalHours, monthlyHours } = useMemo(() => {
+            if (!clientAppointments) return { totalHours: 0, monthlyHours: 0 };
+            
+            const now = new Date();
+            const oneMonthAgo = new Date(now.getFullYear(), now.getMonth() - 1, now.getDate());
+
+            const total = clientAppointments.length;
+            const monthly = clientAppointments.filter(a => new Date(a.date) >= oneMonthAgo).length;
+            
+            return { totalHours: total, monthlyHours: monthly };
+        }, [clientAppointments]);
         
-        const clientProfile = clients.find(c => c.username === user.username);
-        const assignedCounselor = clientProfile ? counselors.find(c => c.assignedClientIds?.includes(clientProfile.id)) : null;
-        const clientAppointments = clientProfile ? appointments.filter(a => a.clientId === clientProfile.id) : [];
+        const handleSaveProfile = (updatedProfile) => {
+            onSave(updatedProfile, true); // true indicates it's a client update
+            setClientProfile(updatedProfile);
+            setIsEditing(false);
+            showAlert("您的信息已成功更新！");
+        };
+
+        if (!clientProfile) {
+            return <div className="min-h-screen flex items-center justify-center">正在加载您的信息...</div>;
+        }
 
         return (
             <div className="min-h-screen bg-gray-50 flex flex-col">
@@ -422,51 +474,81 @@
                 </div>
               </header>
               <main className="flex-grow container mx-auto p-4 sm:p-6 lg:p-8 space-y-8">
-                <div className="bg-white p-6 rounded-lg shadow-md">
-                    <h2 className="text-xl font-semibold text-gray-700 mb-4 border-b pb-3">我的信息</h2>
-                    {clientProfile ? (
+                {isEditing ? (
+                    <ClientForm 
+                        clientToEdit={clientProfile}
+                        onSave={handleSaveProfile}
+                        onCancel={() => setIsEditing(false)}
+                        allClients={allData.clients}
+                    />
+                ) : (
+                    <>
+                    <div className="bg-white p-6 rounded-lg shadow-md">
+                        <div className="flex justify-between items-center mb-4 border-b pb-3">
+                            <h2 className="text-xl font-semibold text-gray-700">我的信息</h2>
+                            <button onClick={() => setIsEditing(true)} className="text-sm font-medium text-blue-600 hover:underline">编辑</button>
+                        </div>
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm">
                            <p><strong>姓名:</strong> {clientProfile.name}</p>
                            <p><strong>年龄:</strong> {clientProfile.age}</p>
                            <p><strong>性别:</strong> {clientProfile.gender}</p>
                            <p><strong>联系方式:</strong> {clientProfile.contact}</p>
+                           <p className="sm:col-span-2"><strong>职业/年级:</strong> {clientProfile.grade || '未提供'}</p>
+                           <p><strong>性取向:</strong> {clientProfile.sexualOrientation || '未提供'}</p>
+                           <p><strong>心理状态评分:</strong> {clientProfile.mentalStateScore}/10</p>
+                           <p className="sm:col-span-2"><strong>既往病史:</strong> {clientProfile.historyOfIllness || '未提供'}</p>
+                           <p className="sm:col-span-2"><strong>残障情况:</strong> {clientProfile.disabilityStatus || '未提供'}</p>
+                           <p><strong>宗教信仰:</strong> {clientProfile.religiousBelief || '未提供'}</p>
+                           <p><strong>种族认同:</strong> {clientProfile.ethnicIdentity || '未提供'}</p>
+                           <p><strong>个人经济:</strong> {clientProfile.personalFinance || '未提供'}</p>
+                           <p><strong>家庭经济:</strong> {clientProfile.familyFinance || '未提供'}</p>
                         </div>
-                    ) : <p className="text-gray-500">无法加载您的信息。</p>}
-                </div>
-
-                <div className="bg-white p-6 rounded-lg shadow-md">
-                   <h2 className="text-xl font-semibold text-gray-700 mb-4 border-b pb-3">我的咨询师</h2>
-                    {assignedCounselor ? (
-                        <div>
-                           <h3 className="text-lg font-bold text-blue-700">{assignedCounselor.name}</h3>
-                           <p className="text-sm text-gray-600 mt-1">{assignedCounselor.modality}</p>
-                           <p className="text-sm text-gray-500 mt-2">{assignedCounselor.email}</p>
-                        </div>
-                    ) : <p className="text-gray-500">您目前未分配咨询师。</p>}
-                </div>
-
-                <div className="bg-white p-6 rounded-lg shadow-md">
-                    <h2 className="text-xl font-semibold text-gray-700 mb-4 border-b pb-3">我的日历</h2>
-                    <div className="space-y-3">
-                        {clientAppointments.length > 0 ? (
-                            clientAppointments.sort((a, b) => new Date(a.date) - new Date(b.date)).map(appt => (
-                                <div key={appt.id} className="bg-blue-50 border-l-4 border-blue-500 p-3 rounded-r-lg">
-                                    <p className="font-bold text-blue-800">{appt.date} - {appt.time}</p>
-                                    <p className="text-sm text-gray-600">与 {counselors.find(c => c.id === appt.counselorId)?.name || '咨询师'} 的咨询</p>
-                                    {appt.location && <p className="text-xs text-gray-500">地点: {appt.location}</p>}
-                                </div>
-                            ))
-                        ) : (
-                            <p className="text-gray-500 text-center py-4">您目前没有已安排的咨询。</p>
-                        )}
                     </div>
-                </div>
+
+                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                        <div className="bg-white p-6 rounded-lg shadow-md">
+                           <h2 className="text-xl font-semibold text-gray-700 mb-4 border-b pb-3">我的咨询师</h2>
+                            {assignedCounselor ? (
+                                <div>
+                                   <h3 className="text-lg font-bold text-blue-700">{assignedCounselor.name}</h3>
+                                   <p className="text-sm text-gray-600 mt-1">{assignedCounselor.modality}</p>
+                                   <p className="text-sm text-gray-500 mt-2">{assignedCounselor.email}</p>
+                                </div>
+                            ) : <p className="text-gray-500">您目前未分配咨询师。</p>}
+                        </div>
+
+                         <div className="bg-white p-6 rounded-lg shadow-md">
+                           <h2 className="text-xl font-semibold text-gray-700 mb-4 border-b pb-3">咨询统计</h2>
+                           <div className="space-y-3">
+                                <p><strong>总咨询时长:</strong> {totalHours} 小时</p>
+                                <p><strong>近一个月咨询时长:</strong> {monthlyHours} 小时</p>
+                           </div>
+                        </div>
+                    </div>
+
+                    <div className="bg-white p-6 rounded-lg shadow-md">
+                        <h2 className="text-xl font-semibold text-gray-700 mb-4 border-b pb-3">我的日历</h2>
+                        <div className="space-y-3">
+                            {clientAppointments.length > 0 ? (
+                                clientAppointments.sort((a, b) => new Date(a.date) - new Date(b.date)).map(appt => (
+                                    <div key={appt.id} className="bg-blue-50 border-l-4 border-blue-500 p-3 rounded-r-lg">
+                                        <p className="font-bold text-blue-800">{appt.date} - {appt.time}</p>
+                                        <p className="text-sm text-gray-600">与 {allData.counselors.find(c => c.id === appt.counselorId)?.name || '咨询师'} 的咨询</p>
+                                        {appt.location && <p className="text-xs text-gray-500">地点: {appt.location}</p>}
+                                    </div>
+                                ))
+                            ) : (
+                                <p className="text-gray-500 text-center py-4">您目前没有已安排的咨询。</p>
+                            )}
+                        </div>
+                    </div>
+                  </>
+                )}
               </main>
             </div>
         );
     }
-    
-    // Omitted other components for brevity, include them from previous version.
+
     const CounselorManagementSection = ({ counselors, clients, appointments, onUpdateCounselors, onDeleteCounselor }) => {
         const { useState, useMemo } = React;
         const [view, setView] = useState('list'); // 'list' or 'form'
@@ -524,6 +606,7 @@
                                         <div>
                                             <h3 className="text-xl font-bold text-blue-700">{counselor.name}</h3>
                                             <p className="text-sm text-gray-600 mt-1">{counselor.modality}</p>
+                                            <p className="text-xs text-gray-500 mt-1">用户名: {counselor.username}</p>
                                         </div>
                                         <div className="text-right flex gap-4">
                                             <div>
@@ -536,7 +619,6 @@
                                             </div>
                                         </div>
                                     </div>
-                                    <p className="text-sm text-gray-500 mt-2 mb-4">{counselor.email}</p>
                                     
                                     <h4 className="text-sm font-bold text-gray-700 mt-4 border-t pt-3">负责来访:</h4>
                                     {assignedClients.length > 0 ? (
@@ -563,7 +645,7 @@
         const [formData, setFormData] = useState({
             name: counselorToEdit?.name || '',
             modality: counselorToEdit?.modality || '',
-            email: counselorToEdit?.email || '',
+            username: counselorToEdit?.username || '',
             assignedClientIds: counselorToEdit?.assignedClientIds || [],
         });
         
@@ -583,7 +665,7 @@
 
         const handleSubmit = (e) => {
             e.preventDefault();
-            if (!formData.name.trim()) { alert('姓名不能为空'); return; }
+            if (!formData.name.trim() || !formData.username.trim()) { alert('姓名和用户名均为必填项。'); return; }
             onSave(formData);
         };
 
@@ -595,8 +677,8 @@
               </div>
                 <form onSubmit={handleSubmit} className="space-y-4 max-w-lg mx-auto">
                   <div><label className="block text-sm font-medium">姓名 <span className="text-red-500">*</span></label><input type="text" name="name" value={formData.name} onChange={handleChange} required className="w-full p-2 border rounded-md" /></div>
+                  <div><label className="block text-sm font-medium">用户名 (用于登录) <span className="text-red-500">*</span></label><input type="text" name="username" value={formData.username} onChange={handleChange} required className="w-full p-2 border rounded-md" disabled={!!counselorToEdit} /></div>
                   <div><label className="block text-sm font-medium">擅长咨询流派</label><input type="text" name="modality" value={formData.modality} onChange={handleChange} className="w-full p-2 border rounded-md" /></div>
-                  <div><label className="block text-sm font-medium">邮箱</label><input type="email" name="email" value={formData.email} onChange={handleChange} className="w-full p-2 border rounded-md" /></div>
                   
                   <div>
                     <label className="block text-sm font-medium">负责来访 (可点击选择)</label>
@@ -689,33 +771,43 @@
             });
         };
         
-        const appointmentsForDay = useMemo(() => {
+        const appointmentsByHour = useMemo(() => {
             const dateStr = currentDate.toISOString().split('T')[0];
-            return appointments.filter(appt => appt.date === dateStr);
+            const filtered = appointments.filter(appt => appt.date === dateStr);
+            const grouped = {};
+            filtered.forEach(appt => {
+                const hour = appt.time.substring(0, 2);
+                if (!grouped[hour]) {
+                    grouped[hour] = [];
+                }
+                grouped[hour].push(appt);
+            });
+            return grouped;
         }, [appointments, currentDate]);
 
         const renderHourlySchedule = () => {
             const hours = Array.from({length: 15}, (_, i) => 8 + i); // 8:00 to 22:00
 
             return hours.map(hour => {
-                const timeStr = `${String(hour).padStart(2, '0')}:00`;
-                const appointment = appointmentsForDay.find(a => a.time === timeStr);
+                const hourStr = String(hour).padStart(2, '0');
+                const hourAppointments = appointmentsByHour[hourStr] || [];
                 
                 return (
                     <tr key={hour} className="border-b">
-                        <td className="p-2 w-24 text-center text-sm text-gray-500 align-top">{timeStr}</td>
-                        <td 
-                            className="p-1 time-slot"
-                            onClick={() => onSelectAppointment(appointment)}
-                        >
-                            {appointment ? (
-                                <div className="bg-blue-100 border-l-4 border-blue-500 p-2 rounded-r-lg cursor-pointer">
-                                    <p className="font-bold text-sm text-blue-800">{clients.find(c => c.id === appointment.clientId)?.name}</p>
-                                    <p className="text-xs text-gray-600">咨询师: {counselors.find(c => c.id === appointment.counselorId)?.name}</p>
-                                    {appointment.location && <p className="text-xs text-gray-600">地点: {appointment.location}</p>}
-                                    {appointment.notes && <p className="text-xs text-gray-500 mt-1 italic">"{appointment.notes}"</p>}
-                                </div>
-                            ) : null}
+                        <td className="p-2 w-24 text-center text-sm text-gray-500 align-top">{hourStr}:00</td>
+                        <td className="p-1">
+                          <div className="time-slot">
+                            {hourAppointments.length > 0 ? (
+                                hourAppointments.map(appointment => (
+                                    <div key={appointment.id} className="bg-blue-100 border-l-4 border-blue-500 p-2 rounded-r-lg cursor-pointer hover:bg-blue-200" onClick={() => onSelectAppointment(appointment)}>
+                                        <p className="font-bold text-sm text-blue-800">{clients.find(c => c.id === appointment.clientId)?.name}</p>
+                                        <p className="text-xs text-gray-600">咨询师: {counselors.find(c => c.id === appointment.counselorId)?.name}</p>
+                                        {appointment.location && <p className="text-xs text-gray-600">地点: {appointment.location}</p>}
+                                        {appointment.notes && <p className="text-xs text-gray-500 mt-1 italic">"{appointment.notes}"</p>}
+                                    </div>
+                                ))
+                            ) : (<div className="h-10"></div>)}
+                          </div>
                         </td>
                     </tr>
                 );
@@ -1287,7 +1379,7 @@
           </div>
       );
     };
-
+    
     ReactDOM.createRoot(document.getElementById('root')).render(<App />);
   </script>
 </body>
