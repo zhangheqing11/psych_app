@@ -40,7 +40,7 @@
 
   <script type="text/babel">
     const App = () => {
-      const { useState, useEffect, useCallback } = React;
+      const { useState, useEffect, useCallback, useMemo } = React;
       
       const [appData, setAppData] = useState({ clients: [], counselors: [], appointments: [] });
       const [isLoading, setIsLoading] = useState(true);
@@ -50,6 +50,8 @@
       const [selectedClient, setSelectedClient] = useState(null);
       const [globalLoadingMessage, setGlobalLoadingMessage] = useState('');
       const [alertInfo, setAlertInfo] = useState({ show: false, message: '' });
+      
+      const [isAssignClientModalOpen, setAssignClientModalOpen] = useState(false);
 
       // Check for persisted user on initial load
       useEffect(() => {
@@ -72,7 +74,8 @@
       const fetchData = useCallback(() => {
         if (currentUser) {
           setIsLoading(true);
-          const dataPath = currentUser.role === 'counselor' ? `/api/data/counselor/${currentUser.username}` : '/api/data/all';
+          // All roles fetch all data now, filtering happens on the frontend.
+          const dataPath = '/api/data/all'; 
           fetch(dataPath)
             .then(res => res.ok ? res.json() : Promise.reject(new Error('Failed to fetch data')))
             .then(data => {
@@ -104,9 +107,11 @@
           if (isClientUpdate) {
              url = `/api/data/client/${currentUser.username}`;
              body = JSON.stringify(dataToSave); // dataToSave is the updated client profile
-          } else if (currentUser.role === 'counselor') {
-             url = `/api/data/counselor/${currentUser.username}`;
-             body = JSON.stringify(dataToSave); // dataToSave is the full appData
+          } else if (currentUser.role === 'counselor' || currentUser.role === 'manager') {
+             // Managers and counselors save their own data or all data
+             const endpoint = currentUser.role === 'manager' ? '/all' : `/counselor/${currentUser.username}`;
+             url = `/api/data${endpoint}`;
+             body = JSON.stringify(dataToSave);
           } else {
             showAlert("无权保存数据。");
             return;
@@ -153,6 +158,15 @@
       };
 
       const handleLogin = async (username, password, role) => {
+        // Hardcoded Manager Login
+        if (role === 'counselor' && username === 'Manager' && password === 'manager') {
+            showAlert('平台管理员登录成功！');
+            const user = { username: 'Manager', role: 'manager' };
+            localStorage.setItem('currentUser', JSON.stringify(user));
+            window.location.reload();
+            return true;
+        }
+        
         try {
             const response = await fetch('/api/login', {
                 method: 'POST',
@@ -182,25 +196,14 @@
           window.location.reload();
       }
       
-      if (isLoading && !currentUser) { // Show loading only when initially checking for user
-          return <div className="min-h-screen flex items-center justify-center">正在加载...</div>
-      }
-
-      if (!currentUser) {
-          return <AuthModal onLogin={handleLogin} onRegister={handleRegister} showAlert={showAlert} />;
-      }
-      
-      if (currentUser.role === 'client') {
-          return <ClientPortal user={currentUser} allData={appData} onLogout={handleLogout} onSave={saveData} showAlert={showAlert} />;
-      }
-
-      // Counselor Portal
+      // Generic data update handler
       const handleUpdateData = (newData) => {
         const updatedData = { ...appData, ...newData };
         setAppData(updatedData);
         saveData(updatedData);
       };
-
+      
+      // --- All handlers that modify state ---
       const handleUpdateClient = (updatedClientData, callback) => {
           let newClientsState = [...appData.clients];
           const clientIndex = newClientsState.findIndex(c => c.id === updatedClientData.id);
@@ -227,6 +230,7 @@
                   ...newClientData,
                   id: `client-${Date.now()}`,
                   username: newClientData.username,
+                  password: newClientData.password || '123456', // Default password for new clients
                   sessions: [],
                   joinDate: new Date().toISOString().split('T')[0],
                   referredBy: newClientData.referredBy || null,
@@ -273,7 +277,7 @@
           handleUpdateData({ counselors: updatedCounselors });
           showAlert('咨询师已删除。');
       };
-
+      
       const handleUpdateAppointments = (appointmentData, isDelete = false) => {
           let updatedAppointments;
             if (isDelete) {
@@ -290,6 +294,21 @@
             handleUpdateData({ appointments: updatedAppointments });
       };
 
+      const handleAssignClients = (selectedClientIds) => {
+        const currentCounselor = appData.counselors.find(c => c.username === currentUser.username);
+        if (!currentCounselor) return;
+
+        const updatedCounselor = {
+            ...currentCounselor,
+            assignedClientIds: [...new Set([...currentCounselor.assignedClientIds, ...selectedClientIds])]
+        };
+        
+        const updatedCounselors = appData.counselors.map(c => c.id === updatedCounselor.id ? updatedCounselor : c);
+        handleUpdateCounselors(updatedCounselors);
+        setAssignClientModalOpen(false);
+        showAlert('成功分配来访者！');
+      };
+
       const handleSelectClient = (client) => { setSelectedClient(client); setActiveSection('clientDetail'); };
       
       const navItems = [
@@ -299,77 +318,185 @@
           { id: 'cbtApplication', label: '辅助工具', icon: '🧠' }
       ];
 
-      const renderSection = () => {
-        if (isLoading) {
-            return <div className="text-center p-10 text-gray-600 font-semibold">正在加载...</div>;
-        }
-        switch (activeSection) {
-          case 'clientManagement':
-            return <ClientManagementSection clients={appData.clients} onAddClient={handleAddClient} onSelectClient={handleSelectClient} />;
-          case 'counselorManagement':
-            return <CounselorManagementSection counselors={appData.counselors} clients={appData.clients} appointments={appData.appointments} onUpdateCounselors={handleUpdateCounselors} onDeleteCounselor={handleDeleteCounselor} />;
-          case 'schedule':
-            return <ScheduleSection appointments={appData.appointments} clients={appData.clients} counselors={appData.counselors} onUpdateAppointments={handleUpdateAppointments} />;
-          case 'clientDetail':
-            return selectedClient ? 
-                   <ClientDetailView 
-                      key={selectedClient.id + JSON.stringify(selectedClient.sessions)} 
-                      client={selectedClient} 
-                      allClients={appData.clients} 
-                      onUpdateClient={handleUpdateClient} 
-                      onDeleteClient={handleDeleteClient}
-                      globalLoadingMessage={globalLoadingMessage}
-                      setGlobalLoadingMessage={setGlobalLoadingMessage}
-                      showAlert={showAlert}
-                    /> : 
-                   <div className="text-center p-10 text-gray-500">请先从“来访者管理”页面选择一位来访者。</div>;
-          case 'cbtApplication':
-            return <CBTSection showAlert={showAlert}/>;
-          default:
-            return <ScheduleSection appointments={appData.appointments} clients={appData.clients} counselors={appData.counselors} onUpdateAppointments={handleUpdateAppointments} />;
-        }
-      };
+      // --- RENDER LOGIC ---
 
-      return (
-        <div className="min-h-screen bg-gray-50 flex flex-col">
-          {alertInfo.show && (
-            <div className="custom-modal-backdrop animate-fadeIn" onClick={() => setAlertInfo({ show: false, message: '' })}>
-              <div className="custom-modal-content" onClick={(e) => e.stopPropagation()}>
-                <p className="text-gray-800">{alertInfo.message}</p>
-                <button className="custom-modal-button" onClick={() => setAlertInfo({ show: false, message: '' })}>关闭</button>
+      if (isLoading && !currentUser) { 
+          return <div className="min-h-screen flex items-center justify-center">正在加载...</div>
+      }
+
+      if (!currentUser) {
+          return <AuthModal onLogin={handleLogin} onRegister={handleRegister} showAlert={showAlert} />;
+      }
+      
+      if (currentUser.role === 'client') {
+          return <ClientPortal user={currentUser} allData={appData} onLogout={handleLogout} onSave={saveData} showAlert={showAlert} />;
+      }
+      
+      // --- Manager & Counselor Portal Logic ---
+      const isManager = currentUser.role === 'manager';
+      const currentCounselorProfile = isManager ? null : appData.counselors.find(c => c.username === currentUser.username);
+
+      const renderPortal = (isManagerView) => {
+        let clientsForView, counselorsForView;
+        
+        if (isManagerView) {
+            clientsForView = appData.clients;
+            counselorsForView = appData.counselors;
+        } else { // Counselor View
+            if (!currentCounselorProfile) {
+                return <div className="p-10 text-center">无法加载您的咨询师信息...</div>;
+            }
+            clientsForView = appData.clients.filter(c => currentCounselorProfile.assignedClientIds?.includes(c.id));
+            counselorsForView = appData.counselors; // Pass all to be filtered inside component
+        }
+
+        const renderSection = () => {
+          if (isLoading) {
+              return <div className="text-center p-10 text-gray-600 font-semibold">正在加载...</div>;
+          }
+          switch (activeSection) {
+            case 'clientManagement':
+              return <ClientManagementSection 
+                        clients={clientsForView} 
+                        onAddClient={handleAddClient} 
+                        onSelectClient={handleSelectClient}
+                        isManager={isManagerView}
+                        onAssignClientClick={() => setAssignClientModalOpen(true)}
+                      />;
+            case 'counselorManagement':
+              return <CounselorManagementSection 
+                        counselors={counselorsForView} 
+                        clients={appData.clients} 
+                        appointments={appData.appointments} 
+                        onUpdateCounselors={handleUpdateCounselors} 
+                        onDeleteCounselor={handleDeleteCounselor} 
+                        isManager={isManagerView}
+                        currentUserProfile={currentCounselorProfile}
+                      />;
+            case 'schedule':
+              return <ScheduleSection 
+                        appointments={appData.appointments} 
+                        clients={appData.clients} 
+                        counselors={appData.counselors} 
+                        onUpdateAppointments={handleUpdateAppointments} 
+                      />;
+            case 'clientDetail':
+              return selectedClient ? 
+                     <ClientDetailView 
+                        key={selectedClient.id + JSON.stringify(selectedClient.sessions)} 
+                        client={selectedClient} 
+                        allClients={appData.clients} 
+                        onUpdateClient={handleUpdateClient} 
+                        onDeleteClient={handleDeleteClient}
+                        globalLoadingMessage={globalLoadingMessage}
+                        setGlobalLoadingMessage={setGlobalLoadingMessage}
+                        showAlert={showAlert}
+                        isManager={isManagerView}
+                      /> : 
+                     <div className="text-center p-10 text-gray-500">请先从“来访者管理”页面选择一位来访者。</div>;
+            case 'cbtApplication':
+              return <CBTSection showAlert={showAlert}/>;
+            default:
+              return <ScheduleSection appointments={appData.appointments} clients={appData.clients} counselors={appData.counselors} onUpdateAppointments={handleUpdateAppointments} />;
+          }
+        };
+
+        const assignedCounselors = appData.counselors.flatMap(c => c.assignedClientIds);
+        const unassignedClients = appData.clients.filter(c => !assignedCounselors.includes(c.id));
+
+        return (
+          <div className="min-h-screen bg-gray-50 flex flex-col">
+            {alertInfo.show && (
+              <div className="custom-modal-backdrop animate-fadeIn" onClick={() => setAlertInfo({ show: false, message: '' })}>
+                <div className="custom-modal-content" onClick={(e) => e.stopPropagation()}>
+                  <p className="text-gray-800">{alertInfo.message}</p>
+                  <button className="custom-modal-button" onClick={() => setAlertInfo({ show: false, message: '' })}>关闭</button>
+                </div>
               </div>
-            </div>
-          )}
-          <header className="bg-white shadow-sm sticky top-0 z-40"><div className="container mx-auto px-4"><div className="flex items-center justify-between h-16">
-          <button onClick={() => setActiveSection('schedule')} className="flex items-center cursor-pointer">
-            <span className="text-2xl mr-3">💌</span>
-            <h1 className="text-xl font-bold text-gray-800">咨询师工作台</h1>
-          </button>
-          <div className="flex items-center gap-4">
-            <nav className="hidden md:flex items-center space-x-1">
-                {navItems.map(item => (
-                    <button 
-                        key={item.id} 
-                        onClick={()=>setActiveSection(item.id)} 
-                        className={`px-3 py-2 rounded-md text-sm font-medium flex items-center transition-colors duration-200 ${activeSection === item.id || (activeSection === 'clientDetail' && item.id === 'clientManagement') ? 'bg-blue-50 text-blue-600' : 'text-gray-500 hover:bg-gray-100'}`}
-                    >
-                        <span className="mr-2">{item.icon}</span>{item.label}
-                    </button>
-                ))}
-            </nav>
-            <div className="border-l pl-4 flex items-center gap-2">
-                <span className="text-sm text-gray-500 hidden lg:inline">{currentUser.username}</span>
-                <button onClick={handleLogout} className="text-sm font-medium text-gray-500 hover:text-red-600">登出</button>
-            </div>
-           </div>
-          </div></div></header>
-          {globalLoadingMessage && (<div className="bg-yellow-100 text-yellow-800 text-center p-2 animate-pulse flex items-center justify-center sticky top-16 z-30"><span className="mr-2">⏳</span>{globalLoadingMessage}</div>)}
-          <main className="flex-grow container mx-auto p-4 sm:p-6 lg:p-8">{renderSection()}</main>
-        </div>
-      );
+            )}
+            {isAssignClientModalOpen && (
+                <AssignClientModal 
+                    unassignedClients={unassignedClients}
+                    onClose={() => setAssignClientModalOpen(false)}
+                    onAssign={handleAssignClients}
+                />
+            )}
+            <header className="bg-white shadow-sm sticky top-0 z-40"><div className="container mx-auto px-4"><div className="flex items-center justify-between h-16">
+            <button onClick={() => setActiveSection('schedule')} className="flex items-center cursor-pointer">
+              <span className="text-2xl mr-3">💌</span>
+              <h1 className="text-xl font-bold text-gray-800">{isManagerView ? '平台管理后台' : '咨询师工作台'}</h1>
+            </button>
+            <div className="flex items-center gap-4">
+              <nav className="hidden md:flex items-center space-x-1">
+                  {navItems.map(item => (
+                      <button 
+                          key={item.id} 
+                          onClick={()=>setActiveSection(item.id)} 
+                          className={`px-3 py-2 rounded-md text-sm font-medium flex items-center transition-colors duration-200 ${activeSection === item.id || (activeSection === 'clientDetail' && item.id === 'clientManagement') ? 'bg-blue-50 text-blue-600' : 'text-gray-500 hover:bg-gray-100'}`}
+                      >
+                          <span className="mr-2">{item.icon}</span>{item.label}
+                      </button>
+                  ))}
+              </nav>
+              <div className="border-l pl-4 flex items-center gap-2">
+                  <span className="text-sm text-gray-500 hidden lg:inline">{currentUser.username}</span>
+                  <button onClick={handleLogout} className="text-sm font-medium text-gray-500 hover:text-red-600">登出</button>
+              </div>
+             </div>
+            </div></div></header>
+            {globalLoadingMessage && (<div className="bg-yellow-100 text-yellow-800 text-center p-2 animate-pulse flex items-center justify-center sticky top-16 z-30"><span className="mr-2">⏳</span>{globalLoadingMessage}</div>)}
+            <main className="flex-grow container mx-auto p-4 sm:p-6 lg:p-8">{renderSection()}</main>
+          </div>
+        );
+      }
+      
+      return isManager ? renderPortal(true) : renderPortal(false);
     };
     
     // --- All Components ---
+    
+    // AssignClientModal (New Component)
+    const AssignClientModal = ({ unassignedClients, onClose, onAssign }) => {
+        const { useState } = React;
+        const [selectedIds, setSelectedIds] = useState([]);
+
+        const handleToggle = (clientId) => {
+            setSelectedIds(prev => 
+                prev.includes(clientId) ? prev.filter(id => id !== clientId) : [...prev, clientId]
+            );
+        };
+
+        const handleSubmit = () => {
+            if (selectedIds.length > 0) {
+                onAssign(selectedIds);
+            }
+        };
+
+        return (
+            <div className="custom-modal-backdrop">
+                <div className="custom-modal-content" style={{textAlign: 'left', width: '500px'}}>
+                    <h3 className="text-xl font-semibold text-gray-800 mb-4">分配来访者</h3>
+                    <p className="text-sm text-gray-500 mb-4">请从未分配的来访者列表中选择，将其添加到您的负责列表。</p>
+                    <div className="max-h-64 overflow-y-auto border rounded-lg p-2 space-y-2">
+                        {unassignedClients.length > 0 ? unassignedClients.map(client => (
+                            <div key={client.id} onClick={() => handleToggle(client.id)}
+                                 className={`p-2 rounded-md cursor-pointer flex items-center gap-3 transition-colors ${selectedIds.includes(client.id) ? 'bg-blue-100' : 'hover:bg-gray-100'}`}>
+                                <input type="checkbox" checked={selectedIds.includes(client.id)} readOnly className="pointer-events-none"/>
+                                <span>{client.name} (ID: ...{client.id.slice(-4)})</span>
+                            </div>
+                        )) : <p className="text-center text-gray-400 p-4">没有未分配的来访者。</p>}
+                    </div>
+                    <div className="flex justify-end gap-3 mt-6">
+                        <button onClick={onClose} className="px-4 py-2 bg-gray-200 hover:bg-gray-300 rounded-md border">取消</button>
+                        <button onClick={handleSubmit} disabled={selectedIds.length === 0}
+                                className="px-4 py-2 text-white bg-blue-600 hover:bg-blue-700 rounded-md shadow-sm disabled:opacity-50">
+                            确认分配 ({selectedIds.length})
+                        </button>
+                    </div>
+                </div>
+            </div>
+        );
+    };
 
     const AuthModal = ({ onLogin, onRegister, showAlert }) => {
         const { useState } = React;
@@ -480,6 +607,7 @@
                         onSave={handleSaveProfile}
                         onCancel={() => setIsEditing(false)}
                         allClients={allData.clients}
+                        isManager={false} // Client cannot be a manager
                     />
                 ) : (
                     <>
@@ -549,7 +677,7 @@
         );
     }
 
-    const CounselorManagementSection = ({ counselors, clients, appointments, onUpdateCounselors, onDeleteCounselor }) => {
+    const CounselorManagementSection = ({ counselors, clients, appointments, onUpdateCounselors, onDeleteCounselor, isManager, currentUserProfile }) => {
         const { useState, useMemo } = React;
         const [view, setView] = useState('list'); // 'list' or 'form'
         const [counselorToEdit, setCounselorToEdit] = useState(null);
@@ -557,18 +685,27 @@
         const counselorsWithHours = useMemo(() => {
             const currentMonth = new Date().getMonth();
             const currentYear = new Date().getFullYear();
-            return counselors.map(counselor => {
+            const processed = counselors.map(counselor => {
                 const monthlyHours = appointments.filter(appt => {
                     if (!appt.date) return false;
                     const apptDate = new Date(appt.date);
                     return appt.counselorId === counselor.id &&
                            apptDate.getMonth() === currentMonth &&
                            apptDate.getFullYear() === currentYear;
-                }).length; // Each appointment is 1 hour
+                }).length; 
                 const totalHours = appointments.filter(appt => appt.counselorId === counselor.id).length;
                 return { ...counselor, monthlyHours, totalHours };
             });
-        }, [counselors, appointments]);
+
+            if (!isManager && currentUserProfile) {
+                const selfIndex = processed.findIndex(c => c.id === currentUserProfile.id);
+                if (selfIndex > 0) {
+                    const self = processed.splice(selfIndex, 1)[0];
+                    processed.unshift(self);
+                }
+            }
+            return processed;
+        }, [counselors, appointments, isManager, currentUserProfile]);
 
         if (view === 'form') {
             return <CounselorForm 
@@ -585,6 +722,7 @@
                 onCancel={() => setView('list')}
                 counselorToEdit={counselorToEdit}
                 allClients={clients}
+                isManager={isManager}
             />
         }
 
@@ -595,12 +733,16 @@
 
         return (
             <div className="bg-white p-6 rounded-lg shadow-md animate-fadeIn">
-                <div className="flex justify-between items-center mb-6 pb-4 border-b"><h2 className="text-2xl font-semibold text-gray-700 flex items-center"><span className="mr-3 text-2xl">🧑‍🏫</span>咨询师管理</h2><button onClick={() => { setCounselorToEdit(null); setView('form'); }} className="bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2 px-4 rounded-lg flex items-center shadow-sm"><span className="mr-2">➕</span>添加咨询师</button></div>
+                <div className="flex justify-between items-center mb-6 pb-4 border-b"><h2 className="text-2xl font-semibold text-gray-700 flex items-center"><span className="mr-3 text-2xl">🧑‍🏫</span>咨询师管理</h2>
+                {isManager && <button onClick={() => { setCounselorToEdit(null); setView('form'); }} className="bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2 px-4 rounded-lg flex items-center shadow-sm"><span className="mr-2">➕</span>添加咨询师</button>}
+                </div>
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                     {counselorsWithHours.map(counselor => {
                         const assignedClients = clients.filter(client => counselor.assignedClientIds?.includes(client.id));
+                        const canEdit = isManager || (currentUserProfile && counselor.id === currentUserProfile.id);
+
                         return (
-                            <div key={counselor.id} className="bg-gray-50 border rounded-lg p-4 flex flex-col">
+                            <div key={counselor.id} className={`border rounded-lg p-4 flex flex-col ${canEdit ? 'bg-gray-50' : 'bg-white'}`}>
                                 <div className="flex-grow">
                                     <div className="flex justify-between items-start">
                                         <div>
@@ -620,17 +762,23 @@
                                         </div>
                                     </div>
                                     
-                                    <h4 className="text-sm font-bold text-gray-700 mt-4 border-t pt-3">负责来访:</h4>
-                                    {assignedClients.length > 0 ? (
-                                        <div className="flex flex-wrap gap-2 mt-2">
-                                            {assignedClients.map(client => <span key={client.id} className="text-xs bg-gray-200 text-gray-800 px-2 py-1 rounded-full">{client.name}</span>)}
-                                        </div>
-                                    ) : <p className="text-xs text-gray-500 mt-2">暂无</p>}
+                                    {canEdit && (
+                                    <>
+                                        <h4 className="text-sm font-bold text-gray-700 mt-4 border-t pt-3">负责来访:</h4>
+                                        {assignedClients.length > 0 ? (
+                                            <div className="flex flex-wrap gap-2 mt-2">
+                                                {assignedClients.map(client => <span key={client.id} className="text-xs bg-gray-200 text-gray-800 px-2 py-1 rounded-full">{client.name}</span>)}
+                                            </div>
+                                        ) : <p className="text-xs text-gray-500 mt-2">暂无</p>}
+                                    </>
+                                    )}
                                 </div>
+                                {canEdit && (
                                 <div className="flex justify-end space-x-2 mt-4 pt-4 border-t">
                                     <button onClick={() => openEditForm(counselor)} className="text-xs font-medium text-blue-600 hover:underline">编辑</button>
-                                    <button onClick={() => onDeleteCounselor(counselor.id)} className="text-xs font-medium text-red-600 hover:underline">删除</button>
+                                    {isManager && <button onClick={() => onDeleteCounselor(counselor.id)} className="text-xs font-medium text-red-600 hover:underline">删除</button>}
                                 </div>
+                                )}
                             </div>
                         )
                     })}
@@ -640,12 +788,13 @@
         );
     };
 
-    const CounselorForm = ({ onSave, onCancel, counselorToEdit, allClients }) => {
+    const CounselorForm = ({ onSave, onCancel, counselorToEdit, allClients, isManager }) => {
         const { useState } = React;
         const [formData, setFormData] = useState({
             name: counselorToEdit?.name || '',
             modality: counselorToEdit?.modality || '',
             username: counselorToEdit?.username || '',
+            password: '', // Password field
             assignedClientIds: counselorToEdit?.assignedClientIds || [],
         });
         
@@ -678,6 +827,9 @@
                 <form onSubmit={handleSubmit} className="space-y-4 max-w-lg mx-auto">
                   <div><label className="block text-sm font-medium">姓名 <span className="text-red-500">*</span></label><input type="text" name="name" value={formData.name} onChange={handleChange} required className="w-full p-2 border rounded-md" /></div>
                   <div><label className="block text-sm font-medium">用户名 (用于登录) <span className="text-red-500">*</span></label><input type="text" name="username" value={formData.username} onChange={handleChange} required className="w-full p-2 border rounded-md" disabled={!!counselorToEdit} /></div>
+                  {isManager && (
+                    <div><label className="block text-sm font-medium">密码 {counselorToEdit ? '(留空则不修改)' : <span className="text-red-500">*</span>}</label><input type="password" name="password" value={formData.password} onChange={handleChange} required={!counselorToEdit} className="w-full p-2 border rounded-md" /></div>
+                  )}
                   <div><label className="block text-sm font-medium">擅长咨询流派</label><input type="text" name="modality" value={formData.modality} onChange={handleChange} className="w-full p-2 border rounded-md" /></div>
                   
                   <div>
@@ -973,13 +1125,23 @@
         );
     };
 
-    const ClientManagementSection = ({ clients, onAddClient, onSelectClient }) => {
+    const ClientManagementSection = ({ clients, onAddClient, onSelectClient, isManager, onAssignClientClick }) => {
         const { useState } = React;
         const [view, setView] = useState('list');
         const [searchTerm, setSearchTerm] = useState('');
         const [clientToEdit, setClientToEdit] = useState(null);
+        
+        const buttonText = isManager ? "➕ 添加新来访" : "🤝 分配来访者";
+        const handleButtonClick = () => {
+            if (isManager) {
+                setClientToEdit(null);
+                setView('form');
+            } else {
+                onAssignClientClick();
+            }
+        };
 
-        if (view === 'form') {
+        if (view === 'form' && isManager) {
             return (
                 <ClientForm 
                     onSave={(clientData, isEditing) => {
@@ -989,6 +1151,7 @@
                     onCancel={() => setView('list')}
                     clientToEdit={clientToEdit}
                     allClients={clients}
+                    isManager={isManager}
                 />
             )
         }
@@ -996,16 +1159,16 @@
         const filteredClients = clients.filter(client => client.name.toLowerCase().includes(searchTerm.toLowerCase()));
         return (
             <div className="bg-white p-6 rounded-lg shadow-md animate-fadeIn">
-                <div className="flex justify-between items-center mb-6 pb-4 border-b"><h2 className="text-2xl font-semibold text-gray-700 flex items-center"><span className="mr-3 text-2xl">👥</span>来访者管理</h2><button onClick={() => {setClientToEdit(null); setView('form');}} className="bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2 px-4 rounded-lg flex items-center shadow-sm"><span className="mr-2">➕</span>添加新来访</button></div>
+                <div className="flex justify-between items-center mb-6 pb-4 border-b"><h2 className="text-2xl font-semibold text-gray-700 flex items-center"><span className="mr-3 text-2xl">👥</span>来访者管理</h2><button onClick={handleButtonClick} className="bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2 px-4 rounded-lg flex items-center shadow-sm">{buttonText}</button></div>
                 <input type="text" placeholder="搜索来访者姓名..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="w-full p-3 mb-4 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"/>
                 {filteredClients.length > 0 ? (
                     <ul className="space-y-3">{filteredClients.map(client => (<li key={client.id} onClick={() => onSelectClient(client)} className="bg-gray-50 hover:bg-blue-50 border rounded-lg p-4 cursor-pointer flex justify-between items-center transition-all duration-200 hover:shadow-md"><div><p className="text-lg font-medium text-blue-700">{client.name} <span className="text-sm text-gray-500">({client.gender}, {client.age}岁)</span></p><p className="text-sm text-gray-600">加入日期: {client.joinDate}</p></div><span className="text-gray-400 font-bold">❯</span></li>))}</ul>
-                ) : <p className="text-center text-gray-500 py-8">暂无匹配的来访者。点击“添加新来访”开始。</p>}
+                ) : <p className="text-center text-gray-500 py-8">{isManager ? "暂无匹配的来访者。点击“添加新来访”开始。" : "您当前未负责任何来访者，或无搜索结果。"}</p>}
             </div>
         );
     };
 
-    const ClientForm = ({ onSave, onCancel, clientToEdit, allClients }) => {
+    const ClientForm = ({ onSave, onCancel, clientToEdit, allClients, isManager }) => {
       const { useState } = React;
       const [formData, setFormData] = useState({
         name: clientToEdit?.name || '', age: clientToEdit?.age || '', gender: clientToEdit?.gender || '未透露',
@@ -1015,12 +1178,15 @@
         disabilityStatus: clientToEdit?.disabilityStatus || '', religiousBelief: clientToEdit?.religiousBelief || '',
         ethnicIdentity: clientToEdit?.ethnicIdentity || '', personalFinance: clientToEdit?.personalFinance || '',
         familyFinance: clientToEdit?.familyFinance || '',
-        username: clientToEdit?.username || '', // Add username field
+        username: clientToEdit?.username || '',
+        password: '',
       });
       const handleChange = (e) => { const { name, value } = e.target; setFormData(prev => ({ ...prev, [name]: value })); };
       const handleSubmit = (e) => {
         e.preventDefault(); if (!formData.name.trim() || !formData.age) { alert('姓名和年龄为必填项。'); return; }
         if (!formData.username.trim()) { alert('必须为来访者设置一个用户名。'); return; }
+        if (isManager && !clientToEdit && !formData.password.trim()) { alert('新用户必须设置密码。'); return; }
+
         const clientData = { ...formData, age: parseInt(formData.age), referredBy: formData.referredBy || null };
         onSave(clientData, !!clientToEdit);
       };
@@ -1037,6 +1203,9 @@
                 <div><label className="block text-sm font-medium">姓名 <span className="text-red-500">*</span></label><input type="text" name="name" value={formData.name} onChange={handleChange} required className="w-full p-2 border rounded-md" /></div>
                 <div><label className="block text-sm font-medium">年龄 <span className="text-red-500">*</span></label><input type="number" name="age" value={formData.age} onChange={handleChange} required className="w-full p-2 border rounded-md" /></div>
                  <div><label className="block text-sm font-medium">用户名 (用于登录) <span className="text-red-500">*</span></label><input type="text" name="username" value={formData.username} onChange={handleChange} required className="w-full p-2 border rounded-md" disabled={!!clientToEdit} /></div>
+                 {isManager && (
+                    <div><label className="block text-sm font-medium">密码 {clientToEdit ? '(留空则不修改)' : <span className="text-red-500">*</span>}</label><input type="password" name="password" value={formData.password} onChange={handleChange} className="w-full p-2 border rounded-md" /></div>
+                 )}
                 <div><label className="block text-sm font-medium">性别</label><select name="gender" value={formData.gender} onChange={handleChange} className="w-full p-2 border rounded-md"><option>未透露</option><option>男</option><option>女</option><option>其他</option></select></div>
                 <div><label className="block text-sm font-medium">在读年级/职业</label><input type="text" name="grade" value={formData.grade} onChange={handleChange} className="w-full p-2 border rounded-md" /></div>
                 <div><label className="block text-sm font-medium">性取向</label><input type="text" name="sexualOrientation" value={formData.sexualOrientation} onChange={handleChange} className="w-full p-2 border rounded-md" /></div>
@@ -1061,7 +1230,7 @@
       );
     };
 
-    const ClientDetailView = ({ client, allClients, onUpdateClient, onDeleteClient, globalLoadingMessage, setGlobalLoadingMessage, showAlert }) => {
+    const ClientDetailView = ({ client, allClients, onUpdateClient, onDeleteClient, globalLoadingMessage, setGlobalLoadingMessage, showAlert, isManager }) => {
       const { useState } = React;
       const [isEditing, setIsEditing] = useState(false);
       
@@ -1074,6 +1243,7 @@
                 setIsEditing(false);
             }}
             onCancel={() => setIsEditing(false)}
+            isManager={isManager}
           />
       }
 
@@ -1083,7 +1253,7 @@
             <h2 className="text-2xl font-semibold text-gray-700 flex items-center"><span className="mr-3 text-3xl">👤</span>{client.name} - 档案中心</h2>
             <div>
               <button onClick={() => setIsEditing(true)} className="text-sm font-medium text-blue-600 hover:text-blue-800 mr-4 flex items-center"><span className="mr-1">✏️</span>编辑</button>
-              <button onClick={() => {if(window.confirm('确定要删除此来访者吗？此操作不可撤销。')) {onDeleteClient(client.id)}}} className="text-sm font-medium text-red-600 hover:text-red-800 flex items-center"><span className="mr-1">🗑️</span>删除</button>
+              {isManager && <button onClick={() => {if(window.confirm('确定要删除此来访者吗？此操作不可撤销。')) {onDeleteClient(client.id)}}} className="text-sm font-medium text-red-600 hover:text-red-800 flex items-center"><span className="mr-1">🗑️</span>删除</button>}
             </div>
           </div>
           <ClientProfileTabs client={client} allClients={allClients} onUpdateClient={onUpdateClient} globalLoadingMessage={globalLoadingMessage} setGlobalLoadingMessage={setGlobalLoadingMessage} showAlert={showAlert} />
@@ -1318,6 +1488,16 @@
 
         const report = selectedSession ? selectedSession[reportType] : null;
 
+        const downloadTextAsFile = (content, filename) => {
+            const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
+            const link = document.createElement('a');
+            link.href = URL.createObjectURL(blob);
+            link.download = filename;
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+        };
+
         return (
              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                 <div className="md:col-span-1 bg-gray-50 p-4 rounded-lg border"><h3 className="text-lg font-medium text-gray-700 mb-3">历史记录</h3><ul className="space-y-2 max-h-[60vh] overflow-y-auto pr-2">{aiSessions.length === 0 ? <p className="text-sm text-gray-500 text-center py-4">暂无记录。</p> : [...aiSessions].reverse().map(session => <li key={session.id} onClick={() => setSelectedSession(session)} className={`p-3 rounded-lg cursor-pointer border-2 ${selectedSession?.id === session.id ? `bg-${themeColor}-100 border-${themeColor}-500` : `bg-white hover:bg-gray-100 border-transparent`}`}><p className={`font-semibold text-${themeColor}-600`}>咨询日期: {session.date}</p><p className={`text-xs font-medium mt-1 text-${session[reportType].status === 'Complete' ? 'green-600' : 'red-600'}`}>状态: {session[reportType].status}</p></li>)}</ul></div>
@@ -1331,6 +1511,16 @@
         const eligibleSessions = (client.sessions || []).filter(s => s.transcript);
         const [selectedSession, setSelectedSession] = useState(eligibleSessions.length > 0 ? eligibleSessions.slice().reverse()[0] : null);
         useEffect(() => { const sessions = (client.sessions || []).filter(s => s.transcript); setSelectedSession(sessions.length > 0 ? sessions.slice().reverse()[0] : null); }, [client]);
+        
+        const downloadTextAsFile = (content, filename) => {
+            const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
+            const link = document.createElement('a');
+            link.href = URL.createObjectURL(blob);
+            link.download = filename;
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+        };
         
         const SupervisionWorkflow = ({ session }) => {
             const conceptualizationInputRef = useRef(null);
