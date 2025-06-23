@@ -250,6 +250,19 @@ def register():
                 "joinDate": time.strftime("%Y-%m-%d"),
             }
             all_data['clients'].append(new_client)
+    # --- 修复 ---
+    # 如果注册的是'咨询师'，同样自动创建其档案，这解决了之前版本中的一个bug。
+    elif role == 'counselor':
+        if not any(c.get('username') == username for c in all_data['counselors']):
+            new_counselor = {
+                "id": f"counselor-{int(time.time())}",
+                "username": username,
+                "password": password,
+                "name": username,
+                "modality": "待填写",
+                "assignedClientIds": []
+            }
+            all_data['counselors'].append(new_counselor)
 
     write_data(all_data)
     app.logger.info(f"用户 '{username}' (角色: {role}) 注册成功。")
