@@ -1,10 +1,9 @@
 # --- 部署说明 (重要) ---
-# 1. 您的 'requirements.txt' 文件必须包含以下内容：
+# 1. 您的 'requirements.txt' 文件必须仅包含以下内容：
 #    Flask
 #    Flask-Cors
 #    requests
 #    gunicorn
-#    filelock
 #
 # 2. 您的项目文件结构必须如下：
 #    / (项目根目录)
@@ -13,19 +12,18 @@
 #    └── static/
 #        └── index.html (您的前端文件)
 #
-# 部署失败或出现白屏通常是因为文件结构不正确。
+# 这个新版本使用SQLite数据库，它更稳定、更高效，并且能从根本上解决文件读写冲突问题。
 # -------------------------
 
 import os
 import json
 import logging
+import sqlite3
 import time
 import traceback
-from flask import Flask, request, jsonify, send_from_directory
+from flask import Flask, request, jsonify, g
 from flask_cors import CORS
 import requests
-# 使用 filelock 替代 fcntl，以实现跨平台文件锁定
-from filelock import FileLock, Timeout
 
 # --- 应用设置与配置 ---
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -34,63 +32,87 @@ static_folder_path = os.path.join(os.path.dirname(__file__), 'static')
 app = Flask(__name__, static_folder=static_folder_path)
 CORS(app)
 
-# 数据文件和锁文件的路径
-DATA_FILE = 'database.json'
-LOCK_FILE = 'database.json.lock'
+# 数据库文件路径
+DATABASE = 'counselor_app.db'
 
 # API 密钥配置
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "YOUR_GEMINI_API_KEY")
 GEMINI_API_URL = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={GEMINI_API_KEY}"
 
 
-# --- 数据持久化 (使用跨平台文件锁) ---
-def get_default_data_structure():
-    """返回一个空的、默认的数据结构。"""
-    return {
-        "users": {"Manager": {"password": "manager", "role": "manager"}},
-        "clients": [],
-        "counselors": [],
-        "appointments": []
-    }
+# --- 数据库辅助函数 ---
+def get_db():
+    """获取当前请求的数据库连接。如果不存在，则创建一个。"""
+    db = getattr(g, '_database', None)
+    if db is None:
+        db = g._database = sqlite3.connect(DATABASE, timeout=10) # 增加超时
+        # 使用 Row factory 使查询结果可以像字典一样通过列名访问
+        db.row_factory = sqlite3.Row
+    return db
 
-def read_data():
-    """从JSON文件安全地读取数据，使用共享锁。"""
-    lock = FileLock(LOCK_FILE, timeout=5)
+@app.teardown_appcontext
+def close_connection(exception):
+    """在请求结束后关闭数据库连接。"""
+    db = getattr(g, '_database', None)
+    if db is not None:
+        db.close()
+
+def init_db():
+    """初始化数据库，创建所有必要的表。"""
     try:
-        with lock.acquire(timeout=5):
-            if not os.path.exists(DATA_FILE):
-                app.logger.info(f"'{DATA_FILE}' not found, creating a new one.")
-                with open(DATA_FILE, 'w', encoding='utf-8') as f:
-                    json.dump(get_default_data_structure(), f, ensure_ascii=False, indent=4)
-                return get_default_data_structure()
+        # 使用独立的连接进行初始化
+        with sqlite3.connect(DATABASE) as db:
+            cursor = db.cursor()
             
-            with open(DATA_FILE, 'r', encoding='utf-8') as f:
-                content = f.read()
-                if not content.strip():
-                    app.logger.warning(f"'{DATA_FILE}' is empty, re-initializing.")
-                    return get_default_data_structure()
-                return json.loads(content)
-    except Timeout:
-        app.logger.error("Could not acquire lock to read data file, another process may be holding it.")
-        return None
-    except Exception as e:
-        app.logger.error(f"Error reading or parsing '{DATA_FILE}': {e}")
-        return None
+            # 创建用户表
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS users (
+                    username TEXT PRIMARY KEY,
+                    password TEXT NOT NULL,
+                    role TEXT NOT NULL
+                )
+            ''')
 
-def write_data(data):
-    """向JSON文件安全地写入数据，使用排他锁。"""
-    lock = FileLock(LOCK_FILE, timeout=5)
-    try:
-        with lock.acquire(timeout=5):
-            with open(DATA_FILE, 'w', encoding='utf-8') as f:
-                json.dump(data, f, ensure_ascii=False, indent=4)
-        return True
-    except Timeout:
-        app.logger.error("Could not acquire lock to write to data file.")
-        return False
-    except Exception as e:
-        app.logger.error(f"Failed to write to '{DATA_FILE}': {e}")
-        return False
+            # 创建来访者表
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS clients (
+                    id TEXT PRIMARY KEY,
+                    username TEXT UNIQUE NOT NULL,
+                    data TEXT NOT NULL
+                )
+            ''')
+            
+            # 创建咨询师表
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS counselors (
+                    id TEXT PRIMARY KEY,
+                    username TEXT UNIQUE NOT NULL,
+                    data TEXT NOT NULL
+                )
+            ''')
+            
+            # 创建日程表
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS appointments (
+                    id TEXT PRIMARY KEY,
+                    data TEXT NOT NULL
+                )
+            ''')
+            
+            # 添加默认管理员账户（如果不存在）
+            cursor.execute("SELECT * FROM users WHERE username = 'Manager'")
+            if cursor.fetchone() is None:
+                cursor.execute("INSERT INTO users (username, password, role) VALUES (?, ?, ?)", 
+                               ('Manager', 'manager', 'manager'))
+
+            db.commit()
+            app.logger.info("数据库已成功初始化。")
+    except sqlite3.Error as e:
+        app.logger.error(f"数据库初始化失败: {e}")
+        # 如果初始化失败，这通常是严重问题，可能需要手动干预
+        # 但我们仍然让应用尝试启动
+        pass
+
 
 # --- AI 模型交互 Prompts (保持不变) ---
 def get_conceptualization_prompt_text():
@@ -221,169 +243,173 @@ def get_supervision_prompt_text():
 
 
 # --- 用户认证 API ---
-
 @app.route('/api/register', methods=['POST'])
 def register():
     """处理新用户注册请求。"""
+    db = get_db()
+    cursor = db.cursor()
     data = request.get_json()
-    if not data:
-        return jsonify({"message": "无效的请求"}), 400
+
+    if not data or not all(k in data for k in ['username', 'password', 'role']):
+        return jsonify({"message": "无效的请求，缺少必要字段"}), 400
     
-    username = data.get('username')
-    password = data.get('password')
-    role = data.get('role')
+    username, password, role = data['username'], data['password'], data['role']
 
-    if not all([username, password, role]):
-        return jsonify({"message": "用户名、密码和角色均为必填项"}), 400
+    try:
+        cursor.execute("SELECT * FROM users WHERE username = ?", (username,))
+        if cursor.fetchone():
+            return jsonify({"message": "此用户名已被占用"}), 409
 
-    all_data = read_data()
-    if all_data is None:
-        return jsonify({"message": "服务器暂时无法处理数据"}), 500
-        
-    if username in all_data.get('users', {}):
-        return jsonify({"message": "此用户名已被占用，请选择其他用户名"}), 409
+        # 插入新用户
+        cursor.execute("INSERT INTO users (username, password, role) VALUES (?, ?, ?)",
+                       (username, password, role))
 
-    # 保存新用户信息
-    all_data['users'][username] = {"password": password, "role": role}
-
-    if role == 'client':
-        if not any(c.get('username') == username for c in all_data['clients']):
-            new_client = {
-                "id": f"client-{int(time.time())}", "username": username, "password": password,
-                "name": username, "age": "", "gender": "未透露", "contact": "", "grade": "", 
-                "sexualOrientation": "", "referredBy": None, "historyOfIllness": "", 
-                "mentalStateScore": "5", "disabilityStatus": "", "religiousBelief": "", 
-                "ethnicIdentity": "", "personalFinance": "", "familyFinance": "", 
-                "sessions": [], "referredClients": [], "joinDate": time.strftime("%Y-%m-%d"),
+        # 根据角色创建档案
+        if role == 'client':
+            client_id = f"client-{int(time.time())}"
+            client_data = {
+                "id": client_id, "username": username, "password": password, "name": username,
+                "age": "", "gender": "未透露", "contact": "", "grade": "", "sexualOrientation": "",
+                "referredBy": None, "historyOfIllness": "", "mentalStateScore": "5",
+                "disabilityStatus": "", "religiousBelief": "", "ethnicIdentity": "",
+                "personalFinance": "", "familyFinance": "", "sessions": [], "referredClients": [],
+                "joinDate": time.strftime("%Y-%m-%d"),
             }
-            all_data['clients'].append(new_client)
-    elif role == 'counselor':
-        if not any(c.get('username') == username for c in all_data['counselors']):
-            new_counselor = {
-                "id": f"counselor-{int(time.time())}", "username": username, "password": password,
+            cursor.execute("INSERT INTO clients (id, username, data) VALUES (?, ?, ?)",
+                           (client_id, username, json.dumps(client_data)))
+        elif role == 'counselor':
+            counselor_id = f"counselor-{int(time.time())}"
+            counselor_data = {
+                "id": counselor_id, "username": username, "password": password,
                 "name": username, "modality": "待填写", "assignedClientIds": []
             }
-            all_data['counselors'].append(new_counselor)
+            cursor.execute("INSERT INTO counselors (id, username, data) VALUES (?, ?, ?)",
+                           (counselor_id, username, json.dumps(counselor_data)))
 
-    if write_data(all_data):
-        app.logger.info(f"User '{username}' (role: {role}) registered successfully.")
-        return jsonify({"message": "注册成功！您现在可以登录了。", "username": username, "role": role}), 201
-    else:
-        return jsonify({"message": "服务器在保存数据时出错"}), 500
+        db.commit()
+        app.logger.info(f"User '{username}' registered successfully.")
+        return jsonify({"message": "注册成功！", "username": username, "role": role}), 201
+
+    except sqlite3.Error as e:
+        db.rollback()
+        app.logger.error(f"Database error during registration: {e}")
+        return jsonify({"message": "服务器数据库错误"}), 500
+    except Exception as e:
+        db.rollback()
+        app.logger.error(f"An unexpected error occurred during registration: {e}")
+        return jsonify({"message": "服务器发生未知错误"}), 500
 
 
 @app.route('/api/login', methods=['POST'])
 def login():
     """处理用户登录请求。"""
+    db = get_db()
+    cursor = db.cursor()
     data = request.get_json()
-    if not data:
-        return jsonify({"message": "无效的请求"}), 400
 
-    username = data.get('username')
-    password = data.get('password')
-    role_attempt = data.get('role')
+    if not data or not all(k in data for k in ['username', 'password', 'role']):
+        return jsonify({"message": "无效的请求，缺少必要字段"}), 400
 
+    username, password, role_attempt = data['username'], data['password'], data['role']
+
+    # 管理员登录的特殊处理
     if username == 'Manager' and password == 'manager' and role_attempt == 'counselor':
-        app.logger.info("Admin 'Manager' logged in successfully.")
+        app.logger.info("Admin 'Manager' logged in.")
         return jsonify({"message": "平台管理员登录成功！", "username": "Manager", "role": "manager"}), 200
-
-    all_data = read_data()
-    if all_data is None:
-        return jsonify({"message": "服务器暂时无法处理数据"}), 500
-
-    user = all_data.get('users', {}).get(username)
-
-    if not user:
-        return jsonify({"message": "用户不存在"}), 404
     
-    if user.get('password') == password and user.get('role') == role_attempt:
-        app.logger.info(f"User '{username}' (role: {user['role']}) logged in successfully.")
-        return jsonify({"message": f"欢迎回来, {username}!", "username": username, "role": user['role']}), 200
-    else:
-        app.logger.warning(f"Failed login attempt for user '{username}'.")
-        return jsonify({"message": "用户名、密码或角色不正确"}), 401
+    try:
+        cursor.execute("SELECT password, role FROM users WHERE username = ?", (username,))
+        user = cursor.fetchone()
 
+        if not user:
+            return jsonify({"message": "用户不存在"}), 404
+        
+        if user['password'] == password and user['role'] == role_attempt:
+            app.logger.info(f"User '{username}' logged in successfully.")
+            return jsonify({"message": f"欢迎回来, {username}!", "username": username, "role": user['role']}), 200
+        else:
+            app.logger.warning(f"Failed login for user '{username}'. Incorrect password or role.")
+            return jsonify({"message": "用户名、密码或角色不正确"}), 401
+
+    except Exception as e:
+        app.logger.error(f"Error during login for '{username}': {e}")
+        return jsonify({"message": "服务器在处理登录时出错"}), 500
 
 # --- 应用核心数据 API ---
 
 @app.route('/api/data/all', methods=['GET', 'POST'])
 def handle_all_data():
     """处理数据获取(GET)和管理员/咨询师的数据保存(POST)。"""
+    db = get_db()
+    cursor = db.cursor()
+
     if request.method == 'GET':
-        all_data = read_data()
-        if all_data is None:
-            return jsonify({"message": "服务器暂时无法处理数据"}), 500
-        response_data = {
-            "clients": all_data.get('clients', []),
-            "counselors": all_data.get('counselors', []),
-            "appointments": all_data.get('appointments', [])
-        }
-        return jsonify(response_data)
-    
-    # POST方法用于管理员保存
+        try:
+            clients = [json.loads(row['data']) for row in cursor.execute("SELECT data FROM clients").fetchall()]
+            counselors = [json.loads(row['data']) for row in cursor.execute("SELECT data FROM counselors").fetchall()]
+            appointments = [json.loads(row['data']) for row in cursor.execute("SELECT data FROM appointments").fetchall()]
+            return jsonify({"clients": clients, "counselors": counselors, "appointments": appointments})
+        except Exception as e:
+            app.logger.error(f"Failed to fetch all data: {e}")
+            return jsonify({"message": "获取数据失败"}), 500
+
     if request.method == 'POST':
-        app.logger.info("Received data save request via /api/data/all (Manager).")
-        all_data = read_data()
+        app.logger.info("Received data save request via /api/data/all.")
         new_data = request.get_json()
-        if all_data is None or new_data is None:
-            return jsonify({"message": "服务器错误或无效的请求数据"}), 500
-        
-        # 安全地更新数据
-        all_data['clients'] = new_data.get('clients', all_data.get('clients', []))
-        all_data['counselors'] = new_data.get('counselors', all_data.get('counselors', []))
-        all_data['appointments'] = new_data.get('appointments', all_data.get('appointments', []))
-        
-        if write_data(all_data):
-            return jsonify({"message": "管理员数据已成功保存"}), 200
-        else:
-            return jsonify({"message": "服务器在保存数据时出错"}), 500
+        try:
+            db.execute("BEGIN TRANSACTION")
+            # 清空现有数据
+            cursor.execute("DELETE FROM clients")
+            cursor.execute("DELETE FROM counselors")
+            cursor.execute("DELETE FROM appointments")
 
-@app.route('/api/data/<role>/<username>', methods=['POST'])
-def save_data_by_role(role, username):
-    """根据用户角色保存数据（主要为咨询师和来访者）。"""
-    app.logger.info(f"Received save request for role: {role}, user: {username}")
-    all_data = read_data()
-    new_data = request.get_json()
-    if all_data is None or new_data is None:
-        return jsonify({"message": "服务器错误或无效的请求数据"}), 500
+            # 插入新数据
+            if new_data.get('clients'):
+                client_tuples = [(c['id'], c.get('username'), json.dumps(c)) for c in new_data['clients']]
+                cursor.executemany("INSERT OR REPLACE INTO clients (id, username, data) VALUES (?, ?, ?)", client_tuples)
+            
+            if new_data.get('counselors'):
+                counselor_tuples = [(c['id'], c.get('username'), json.dumps(c)) for c in new_data['counselors']]
+                cursor.executemany("INSERT OR REPLACE INTO counselors (id, username, data) VALUES (?, ?, ?)", counselor_tuples)
 
-    user_info = all_data.get('users', {}).get(username)
-    if not user_info or user_info.get('role') != role:
-         return jsonify({"message": "无权操作或用户信息不匹配"}), 403
+            if new_data.get('appointments'):
+                appt_tuples = [(a['id'], json.dumps(a)) for a in new_data['appointments']]
+                cursor.executemany("INSERT OR REPLACE INTO appointments (id, data) VALUES (?, ?)", appt_tuples)
 
-    if role == 'counselor':
-        # 修复：安全地合并咨询师提交的完整数据
-        all_data['clients'] = new_data.get('clients', all_data.get('clients', []))
-        all_data['counselors'] = new_data.get('counselors', all_data.get('counselors', []))
-        all_data['appointments'] = new_data.get('appointments', all_data.get('appointments', []))
-        
-        if write_data(all_data):
-            return jsonify({"message": "咨询师数据保存成功"}), 200
-        else:
-            return jsonify({"message": "服务器在保存数据时出错"}), 500
+            db.commit()
+            return jsonify({"message": "数据已成功保存"}), 200
+        except Exception as e:
+            db.rollback()
+            app.logger.error(f"Error saving all data: {e}")
+            return jsonify({"message": "保存数据时出错"}), 500
 
-    if role == 'client':
-        client_found = False
-        for i, client in enumerate(all_data.get('clients', [])):
-            if client.get('username') == username:
-                # 只更新客户端档案，不触及其他数据
-                all_data['clients'][i].update(new_data)
-                client_found = True
-                break
-        
-        if not client_found:
+@app.route('/api/data/client/<username>', methods=['POST'])
+def save_client_data(username):
+    """专门用来让来访者更新自己的档案。"""
+    db = get_db()
+    updated_profile = request.get_json()
+    if not updated_profile:
+        return jsonify({"message": "无效的请求"}), 400
+
+    try:
+        cursor = db.cursor()
+        cursor.execute("SELECT data FROM clients WHERE username = ?", (username,))
+        row = cursor.fetchone()
+        if not row:
             return jsonify({"message": "未找到来访者档案"}), 404
         
-        if write_data(all_data):
-            return jsonify({"message": "来访者信息更新成功"}), 200
-        else:
-            return jsonify({"message": "服务器在保存数据时出错"}), 500
+        current_data = json.loads(row['data'])
+        current_data.update(updated_profile)
         
-    return jsonify({"message": "未知的角色或错误"}), 400
-
+        cursor.execute("UPDATE clients SET data = ? WHERE username = ?", (json.dumps(current_data), username))
+        db.commit()
+        return jsonify({"message": "来访者信息更新成功"}), 200
+    except Exception as e:
+        db.rollback()
+        app.logger.error(f"Error updating client data for {username}: {e}")
+        return jsonify({"message": "更新信息时出错"}), 500
 
 # --- AI 分析 API ---
-
 def call_gemini_api(system_prompt, user_prompt):
     """调用Gemini API并返回生成的文本内容。"""
     headers = {'Content-Type': 'application/json'}
@@ -450,7 +476,6 @@ def get_supervision():
 
 
 # --- 前端静态文件服务 ---
-
 @app.route('/', defaults={'path': ''})
 @app.route('/<path:path>')
 def serve_frontend(path):
@@ -462,6 +487,15 @@ def serve_frontend(path):
         return send_from_directory(app.static_folder, 'index.html')
 
 # --- 应用启动 ---
+# 使用 before_first_request 来确保数据库在第一个请求前被初始化
+@app.before_request
+def before_first_request_func():
+    # 使用一个全局变量来确保init_db()只运行一次
+    if not hasattr(g, 'db_initialized'):
+        init_db()
+        g.db_initialized = True
+
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
-    app.run(host='0.0.0.0', port=port, debug=True)
+    # 在生产环境中，建议使用 gunicorn 等WSGI服务器
+    app.run(host='0.0.0.0', port=port, debug=False)
