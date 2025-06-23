@@ -1,3 +1,19 @@
+# --- 部署说明 (重要) ---
+# 1. 您的 'requirements.txt' 文件必须包含以下内容：
+#    Flask
+#    Flask-Cors
+#    requests
+#    gunicorn
+#
+# 2. 您的项目文件结构必须如下：
+#    / (项目根目录)
+#    ├── app.py         (此后端文件)
+#    ├── requirements.txt
+#    └── static/
+#        └── index.html (您的前端文件)
+#
+# 部署失败或出现白屏通常是因为文件结构不正确。
+# -------------------------
 
 # 安装必要的库: pip install Flask Flask-Cors requests gunicorn
 from flask import Flask, request, jsonify, send_from_directory
@@ -7,10 +23,12 @@ import os
 import json
 import traceback
 import logging
+import time
 
 # --- Flask 应用设置 ---
-# Flask将自动在与此文件相同的目录级别中寻找 'static' 文件夹。
-app = Flask(__name__, static_folder='static')
+# 定义静态文件夹的路径，使其相对于此文件的位置，这在部署时更可靠
+static_folder_path = os.path.join(os.path.dirname(__file__), 'static')
+app = Flask(__name__, static_folder=static_folder_path)
 CORS(app)  # 允许跨域请求
 
 # 配置日志记录以更好地进行调试
@@ -24,15 +42,15 @@ DATA_FILE = 'database.json'
 def read_data():
     """从JSON文件读取数据。如果文件不存在或为空，则返回一个默认的数据结构。"""
     if not os.path.exists(DATA_FILE):
-        return {"users": {}, "app_data": {}}
+        return {"users": {}, "counselor_data": {"clients": [], "counselors": [], "appointments": []}}
     try:
         with open(DATA_FILE, 'r', encoding='utf-8') as f:
             content = f.read()
             if not content:
-                return {"users": {}, "app_data": {}}
+                return {"users": {}, "counselor_data": {"clients": [], "counselors": [], "appointments": []}}
             return json.loads(content)
     except (json.JSONDecodeError, FileNotFoundError):
-        return {"users": {}, "app_data": {}}
+        return {"users": {}, "counselor_data": {"clients": [], "counselors": [], "appointments": []}}
 
 def write_data(data):
     """将数据写入JSON文件。"""
@@ -169,32 +187,47 @@ def get_supervision_prompt_text():
 # --- 用户认证API ---
 @app.route('/api/register', methods=['POST'])
 def register():
-    """处理用户注册。检查用户名是否存在，然后存储新用户。"""
     data = request.get_json()
     username = data.get('username')
     password = data.get('password')
+    role = data.get('role') # 'counselor' or 'client'
 
-    if not username or not password:
-        return jsonify({"message": "用户名和密码是必填项"}), 400
+    if not all([username, password, role]):
+        return jsonify({"message": "用户名、密码和角色都是必填项"}), 400
     
-    if len(password) < 6:
-        return jsonify({"message": "密码必须至少为6个字符"}), 400
-
     all_data = read_data()
     if username in all_data['users']:
         return jsonify({"message": "用户名已存在"}), 409
 
-    all_data['users'][username] = {"password": password}
+    all_data['users'][username] = {"password": password, "role": role}
+    
+    # 如果一个新“来访者”注册，为他创建一个空的档案
+    if role == 'client':
+        if 'counselor_data' not in all_data:
+            all_data['counselor_data'] = {"clients": [], "counselors": [], "appointments": []}
+        
+        # 检查该用户名的来访者是否已存在
+        if not any(c.get('username') == username for c in all_data['counselor_data']['clients']):
+            new_client_entry = {
+                "id": f"client-{int(time.time())}",
+                "username": username,
+                "name": username, # 默认名字为用户名
+                "age": "", "gender": "未透露", "contact": "",
+                "sessions": [],
+                "joinDate": time.strftime("%Y-%m-%d"),
+            }
+            all_data['counselor_data']['clients'].append(new_client_entry)
+        
     write_data(all_data)
     
-    return jsonify({"message": "注册成功！", "username": username}), 201
+    return jsonify({"message": "注册成功！", "username": username, "role": role}), 201
 
 @app.route('/api/login', methods=['POST'])
 def login():
-    """处理用户登录。验证用户名和密码。"""
     data = request.get_json()
     username = data.get('username')
     password = data.get('password')
+    role_attempt = data.get('role')
     
     all_data = read_data()
     user = all_data.get('users', {}).get(username)
@@ -202,65 +235,63 @@ def login():
     if not user:
         return jsonify({"message": "用户不存在"}), 404
     
-    if user['password'] == password:
-        return jsonify({"message": f"欢迎回来, {username}!", "username": username}), 200
+    if user['password'] == password and user['role'] == role_attempt:
+        return jsonify({"message": f"欢迎回来, {username}!", "username": username, "role": user['role']}), 200
     else:
-        return jsonify({"message": "密码错误"}), 401
+        return jsonify({"message": "用户名、密码或角色不正确"}), 401
 
 # --- 应用数据API ---
-@app.route('/api/data/<username>', methods=['GET'])
-def get_user_data(username):
-    """获取特定用户的所有应用数据。"""
+@app.route('/api/data/counselor/<username>', methods=['GET'])
+def get_counselor_data(username):
+    """获取咨询师的完整数据。"""
     all_data = read_data()
-    user_data = all_data.get('app_data', {}).get(username, {
-        "clients": [],
-        "counselors": [],
-        "appointments": []
+    user_data = all_data.get('counselor_data', {
+        "clients": [], "counselors": [], "appointments": []
     })
     return jsonify(user_data)
 
-@app.route('/api/data/<username>', methods=['POST'])
+@app.route('/api/data/all', methods=['GET'])
+def get_all_data_for_client():
+    """为来访者提供所有数据，以便前端进行筛选。"""
+    all_data = read_data()
+    user_data = all_data.get('counselor_data', {
+        "clients": [], "counselors": [], "appointments": []
+    })
+    return jsonify(user_data)
+
+@app.route('/api/data/counselor/<username>', methods=['POST'])
 def save_user_data(username):
-    """保存特定用户的所有应用数据。"""
+    """保存咨询师的数据。"""
     new_data = request.get_json()
     all_data = read_data()
+    user = all_data.get('users', {}).get(username)
+    if not user or user.get('role') != 'counselor':
+        return jsonify({"message": "无权操作"}), 403
 
-    if 'app_data' not in all_data:
-        all_data['app_data'] = {}
-
-    all_data['app_data'][username] = new_data
+    all_data['counselor_data'] = new_data
     
     write_data(all_data)
     return jsonify({"message": "数据保存成功"}), 200
 
 # --- AI 分析 API ---
-# 注意：您需要将 "YOUR_GEMINI_API_KEY" 替换为您的实际Google Gemini API密钥。
-# 将密钥存储在环境变量中是更安全的做法。
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "YOUR_GEMINI_API_KEY")
 GEMINI_API_URL = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={GEMINI_API_KEY}"
 
 def call_gemini_api(system_prompt, user_prompt):
-    """一个通用的辅助函数，用于调用Gemini API。"""
     headers = {'Content-Type': 'application/json'}
-    payload = {
-        "contents": [{"role": "user", "parts": [{"text": f"{system_prompt}\n\n{user_prompt}"}]}]
-    }
+    payload = {"contents": [{"role": "user", "parts": [{"text": f"{system_prompt}\n\n{user_prompt}"}]}]}
     try:
         response = requests.post(GEMINI_API_URL, headers=headers, json=payload, timeout=300)
         response.raise_for_status()
         data = response.json()
-        
-        # 从API响应中提取文本内容
         content = data['candidates'][0]['content']['parts'][0]['text']
         return content
     except Exception as e:
         app.logger.error(f"调用Gemini API时出错: {e}")
-        traceback.print_exc()
         raise
 
 @app.route('/api/ai/conceptualization', methods=['POST'])
 def get_conceptualization():
-    """为个案概念化生成AI内容。"""
     data = request.json
     user_prompt = f"来访者基本信息:\n{json.dumps(data.get('client_info'), indent=2, ensure_ascii=False)}\n\n咨询逐字稿内容:\n---\n{data.get('transcript_content')}\n---"
     try:
@@ -271,7 +302,6 @@ def get_conceptualization():
 
 @app.route('/api/ai/assessment', methods=['POST'])
 def get_assessment():
-    """为来访者评估生成AI内容。"""
     data = request.json
     user_prompt = f"来访者基本信息:\n{json.dumps(data.get('client_info'), indent=2, ensure_ascii=False)}\n\n咨询逐字稿内容:\n---\n{data.get('transcript_content')}\n---"
     try:
@@ -282,7 +312,6 @@ def get_assessment():
 
 @app.route('/api/ai/supervision', methods=['POST'])
 def get_supervision():
-    """为督导报告生成AI内容。"""
     data = request.json
     prompt_for_supervision = f"来访者基本信息:\n{json.dumps(data.get('client_info'), indent=2, ensure_ascii=False)}\n\n咨询逐字稿内容:\n{data.get('transcript_content')}\n\nAI生成的个案概念化:\n{data.get('conceptualization_content')}\n\nAI生成的来访者评估:\n{data.get('assessment_content')}"
     try:
@@ -292,24 +321,15 @@ def get_supervision():
         return jsonify({"error": f"服务器内部错误: {e}"}), 500
 
 # --- 前端文件服务路由 ---
-# 这是一个回退路由，用于服务单页应用（SPA）
 @app.route('/', defaults={'path': ''})
 @app.route('/<path:path>')
 def serve_frontend(path):
-    # 'static' 文件夹是存放您的 index.html 和其他前端资产（如CSS, JS）的地方
-    # 如果请求的是一个存在的文件（如 an-image.png），则直接提供它
     if path != "" and os.path.exists(os.path.join(app.static_folder, path)):
-        app.logger.info(f"正在提供静态文件: {path}")
         return send_from_directory(app.static_folder, path)
     else:
-        # 对于所有其他路径（如 /login, /clients, 或空路径 /），都返回 index.html
-        # 这使得前端的React Router能够处理路由
-        app.logger.info(f"路径 '{path}' 未找到，返回 index.html")
         return send_from_directory(app.static_folder, 'index.html')
 
 
 if __name__ == '__main__':
-    # Gunicorn等生产服务器将使用此文件，因此debug模式应为False
     port = int(os.environ.get('PORT', 5000))
     app.run(host='0.0.0.0', port=port, debug=False)
-
