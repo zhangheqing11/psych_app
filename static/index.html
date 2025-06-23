@@ -79,23 +79,27 @@
             fetchData();
         }, [fetchData]);
 
-        const saveData = useCallback(async (dataToSave, isClientUpdate = false) => {
+        // *** CRITICAL FIX: Unified saveData logic ***
+        const saveData = useCallback(async (dataToSave, isClientProfileUpdate = false) => {
             if (!currentUser) {
                 showAlert("请先登录。");
                 return;
             }
+
             let url, body;
-            // Determine the correct API endpoint based on the user's role and action
-            if (isClientUpdate) {
+
+            //来访者只更新自己的档案
+            if (isClientProfileUpdate && currentUser.role === 'client') {
                 url = `/api/data/client/${currentUser.username}`;
-                body = JSON.stringify(dataToSave); // dataToSave is the updated client profile
-            } else if (currentUser.role === 'manager') {
-                url = `/api/data/all`; // Manager saves all data
-                body = JSON.stringify(dataToSave);
-            } else if (currentUser.role === 'counselor') {
-                url = `/api/data/counselor/${currentUser.username}`;
-                body = JSON.stringify(dataToSave);
-            } else {
+                body = JSON.stringify(dataToSave); // Here, dataToSave is just the client object
+            } 
+            // 管理员和咨询师提交完整的应用数据
+            else if (currentUser.role === 'manager' || currentUser.role === 'counselor') {
+                url = `/api/data/all`;
+                // Here, dataToSave is the entire appData object {clients, counselors, appointments}
+                body = JSON.stringify(dataToSave); 
+            } 
+            else {
                 showAlert("无权保存数据。");
                 return;
             }
@@ -110,6 +114,8 @@
                     const err = await response.json();
                     throw new Error(err.message || "保存失败");
                 }
+                // Optionally show a success message, but can be intrusive.
+                // showAlert('数据已保存。');
             } catch (error) {
                 console.error("Failed to save data:", error);
                 showAlert(`保存数据失败: ${error.message}`);
@@ -128,7 +134,6 @@
                     showAlert(data.message);
                     const user = { username: data.username, role: data.role };
                     localStorage.setItem('currentUser', JSON.stringify(user));
-                    // *** FIX: Instead of reloading, directly set the state to trigger re-render ***
                     setCurrentUser(user);
                     return true;
                 } else {
@@ -147,7 +152,6 @@
                 showAlert('平台管理员登录成功！');
                 const user = { username: 'Manager', role: 'manager' };
                 localStorage.setItem('currentUser', JSON.stringify(user));
-                // *** FIX: Instead of reloading, directly set the state ***
                 setCurrentUser(user);
                 return true;
             }
@@ -162,7 +166,6 @@
                     showAlert(data.message);
                     const user = { username: data.username, role: data.role };
                     localStorage.setItem('currentUser', JSON.stringify(user));
-                    // *** FIX: Instead of reloading, directly set the state ***
                     setCurrentUser(user);
                     return true;
                 } else {
@@ -177,18 +180,16 @@
 
         const handleLogout = () => {
             localStorage.removeItem('currentUser');
-            // *** FIX: Set user to null to re-render the AuthModal, no reload needed ***
             setCurrentUser(null);
         }
 
-        // Generic data update handler
+        // --- All handlers that modify state and trigger save ---
         const handleUpdateData = (newData) => {
             const updatedData = { ...appData, ...newData };
             setAppData(updatedData);
-            saveData(updatedData);
+            saveData(updatedData); // This now correctly calls the unified save endpoint
         };
 
-        // --- All handlers that modify state ---
         const handleUpdateClient = (updatedClientData, callback) => {
             let newClientsState = [...appData.clients];
             const clientIndex = newClientsState.findIndex(c => c.id === updatedClientData.id);
@@ -202,6 +203,15 @@
                 setSelectedClient(updatedClientData);
             }
             if (callback) callback(updatedClientData);
+        };
+        
+        // This handler is used by the ClientPortal to save only their profile
+        const handleSaveClientProfile = (updatedProfile) => {
+            // The second argument `true` signals to `saveData` that this is a client self-update
+            saveData(updatedProfile, true); 
+            const updatedClients = appData.clients.map(c => c.username === currentUser.username ? updatedProfile : c);
+            setAppData({...appData, clients: updatedClients});
+            showAlert("您的信息已成功更新！");
         };
 
         const handleAddClient = (newClientData, clientToEdit) => {
@@ -244,7 +254,7 @@
         };
         
         const handleUpdateCounselors = (updatedCounselors) => {
-             handleUpdateData({ counselors: updatedCounselors });
+             handleUpdateData({ ...appData, counselors: updatedCounselors });
         };
         
         const handleDeleteCounselor = (counselorId) => {
@@ -253,7 +263,7 @@
                 return;
             }
             const updatedCounselors = appData.counselors.filter(c => c.id !== counselorId);
-            handleUpdateData({ counselors: updatedCounselors });
+            handleUpdateData({ ...appData, counselors: updatedCounselors });
             showAlert('咨询师已删除。');
         };
 
@@ -270,7 +280,7 @@
                     updatedAppointments = [...appData.appointments, {...appointmentData, id: `appt-${Date.now()}`}];
                 }
             }
-            handleUpdateData({ appointments: updatedAppointments });
+            handleUpdateData({ ...appData, appointments: updatedAppointments });
         };
 
         const handleAssignClients = (selectedClientIds) => {
@@ -308,7 +318,7 @@
         }
 
         if (currentUser.role === 'client') {
-            return <ClientPortal user={currentUser} allData={appData} onLogout={handleLogout} onSave={saveData} showAlert={showAlert} />;
+            return <ClientPortal user={currentUser} allData={appData} onLogout={handleLogout} onSaveProfile={handleSaveClientProfile} showAlert={showAlert} />;
         }
 
         // --- Manager & Counselor Portal Logic ---
@@ -329,7 +339,7 @@
             }
 
             const renderSection = () => {
-                if(isLoading) {
+                if(isLoading && !appData.counselors.length) { // Added a check here
                     return <div className="text-center p-10 text-gray-600 font-semibold">正在加载...</div>;
                 }
                 switch(activeSection) {
@@ -384,7 +394,7 @@
                 }
             };
             
-            const assignedCounselors = appData.counselors.flatMap(c => c.assignedClientIds);
+            const assignedCounselors = appData.counselors.flatMap(c => c.assignedClientIds || []);
             const unassignedClients = appData.clients.filter(c => !assignedCounselors.includes(c.id));
 
             return (
@@ -446,9 +456,9 @@
         return isManager ? renderPortal(true) : renderPortal(false);
     };
 
-    // --- All Components ---
+    // --- All Components (No changes below this line for this fix) ---
 
-    // AssignClientModal (New Component)
+    // AssignClientModal
     const AssignClientModal = ({ unassignedClients, onClose, onAssign }) => {
         const { useState } = React;
         const [selectedIds, setSelectedIds] = useState([]);
@@ -538,7 +548,7 @@
         );
     };
 
-    const ClientPortal = ({ user, allData, onLogout, onSave, showAlert }) => {
+    const ClientPortal = ({ user, allData, onLogout, onSaveProfile, showAlert }) => {
         const { useState, useMemo, useEffect } = React;
         const [isEditing, setIsEditing] = useState(false);
         const [clientProfile, setClientProfile] = useState(null);
@@ -560,11 +570,10 @@
             return { totalHours: total, monthlyHours: monthly };
         }, [clientAppointments]);
 
-        const handleSaveProfile = (updatedProfile) => {
-            onSave(updatedProfile, true); // true indicates it's a client update
+        const handleSave = (updatedProfile) => {
+            onSaveProfile(updatedProfile);
             setClientProfile(updatedProfile);
             setIsEditing(false);
-            showAlert("您的信息已成功更新！");
         };
 
         if (!clientProfile) {
@@ -586,8 +595,7 @@
                 </header>
                 <main className="flex-grow container mx-auto p-4 sm:p-6 lg:p-8 space-y-8">
                     {isEditing ? (
-                        <ClientForm clientToEdit={clientProfile} onSave={handleSaveProfile} onCancel={() => setIsEditing(false)} allClients={allData.clients} isManager={false} // Client cannot be a manager
-                        />
+                        <ClientForm clientToEdit={clientProfile} onSave={handleSave} onCancel={() => setIsEditing(false)} allClients={allData.clients} isManager={false} />
                     ) : (
                         <>
                             <div className="bg-white p-6 rounded-lg shadow-md">
