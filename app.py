@@ -243,32 +243,22 @@ def register():
 
     # 如果注册的是'来访者'，自动为其创建一个档案
     if role == 'client':
-        # 确保来访者档案不存在，避免重复创建
         if not any(c.get('username') == username for c in all_data['clients']):
             new_client = {
-                "id": f"client-{int(time.time())}",
-                "username": username,
-                "password": password, # 保存密码以备将来使用
-                "name": username,  # 默认使用用户名作为姓名
-                "age": "", "gender": "未透露", "contact": "",
-                "grade": "", "sexualOrientation": "", "referredBy": None,
-                "historyOfIllness": "", "mentalStateScore": "5",
-                "disabilityStatus": "", "religiousBelief": "", "ethnicIdentity": "",
-                "personalFinance": "", "familyFinance": "", "sessions": [],
-                "referredClients": [],
-                "joinDate": time.strftime("%Y-%m-%d"),
+                "id": f"client-{int(time.time())}", "username": username, "password": password,
+                "name": username, "age": "", "gender": "未透露", "contact": "", "grade": "", 
+                "sexualOrientation": "", "referredBy": None, "historyOfIllness": "", 
+                "mentalStateScore": "5", "disabilityStatus": "", "religiousBelief": "", 
+                "ethnicIdentity": "", "personalFinance": "", "familyFinance": "", 
+                "sessions": [], "referredClients": [], "joinDate": time.strftime("%Y-%m-%d"),
             }
             all_data['clients'].append(new_client)
     # 如果注册的是'咨询师'，同样自动创建其档案
     elif role == 'counselor':
         if not any(c.get('username') == username for c in all_data['counselors']):
             new_counselor = {
-                "id": f"counselor-{int(time.time())}",
-                "username": username,
-                "password": password,
-                "name": username,
-                "modality": "待填写",
-                "assignedClientIds": []
+                "id": f"counselor-{int(time.time())}", "username": username, "password": password,
+                "name": username, "modality": "待填写", "assignedClientIds": []
             }
             all_data['counselors'].append(new_counselor)
 
@@ -308,10 +298,7 @@ def login():
 
 @app.route('/api/data/all', methods=['GET', 'POST'])
 def handle_all_data():
-    """
-    为所有登录用户提供统一的数据获取入口 (GET)。
-    也处理来自管理员的批量数据保存请求 (POST)，以匹配前端逻辑。
-    """
+    """为所有登录用户提供统一的数据获取入口 (GET)。也处理来自管理员的批量数据保存请求 (POST)。"""
     if request.method == 'GET':
         all_data = read_data()
         response_data = {
@@ -322,37 +309,30 @@ def handle_all_data():
         return jsonify(response_data)
     
     if request.method == 'POST':
-        # 这个端点专门用于管理员保存所有数据
-        app.logger.info("收到管理员通过 /api/data/all 保存数据的请求。")
+        app.logger.info("收到通过 /api/data/all 保存数据的请求。")
         all_data = read_data()
         new_data = request.get_json()
         
-        # 为了安全，只更新预期的键
         all_data['clients'] = new_data.get('clients', all_data.get('clients', []))
         all_data['counselors'] = new_data.get('counselors', all_data.get('counselors', []))
         all_data['appointments'] = new_data.get('appointments', all_data.get('appointments', []))
         
         write_data(all_data)
-        return jsonify({"message": "管理员数据已成功保存"}), 200
+        return jsonify({"message": "数据已成功保存"}), 200
 
 @app.route('/api/data/<role>/<username>', methods=['POST'])
 def save_data_by_role(role, username):
-    """根据用户角色保存数据。管理员的保存请求由 /api/data/all 处理。"""
+    """根据用户角色保存数据。"""
     app.logger.info(f"收到来自 '{username}' (角色: {role}) 的数据保存请求。")
     all_data = read_data()
     
     user_info = all_data.get('users', {}).get(username)
     if not user_info or user_info['role'] != role:
-        # 管理员角色已在 /api/data/all 中处理，这里排除
-        if not (role == 'manager' and username == 'Manager'):
-             return jsonify({"message": "无权操作或用户信息不匹配"}), 403
+         return jsonify({"message": "无权操作或用户信息不匹配"}), 403
 
-    # 此端点现在只处理咨询师和来访者
     if role == 'counselor':
         new_data = request.get_json()
-        all_data['clients'] = new_data.get('clients', all_data.get('clients',[]))
-        all_data['counselors'] = new_data.get('counselors', all_data.get('counselors',[]))
-        all_data['appointments'] = new_data.get('appointments', all_data.get('appointments',[]))
+        all_data.update(new_data)
         write_data(all_data)
         return jsonify({"message": "咨询师数据保存成功"}), 200
 
@@ -378,12 +358,7 @@ def save_data_by_role(role, username):
 def call_gemini_api(system_prompt, user_prompt):
     """调用Gemini API并返回生成的文本内容。"""
     headers = {'Content-Type': 'application/json'}
-    payload = {
-        "contents": [{
-            "role": "user", 
-            "parts": [{"text": f"{system_prompt}\n\n---\n\n{user_prompt}"}]
-        }]
-    }
+    payload = { "contents": [{"role": "user", "parts": [{"text": f"{system_prompt}\n\n---\n\n{user_prompt}"}]}] }
     try:
         response = requests.post(GEMINI_API_URL, headers=headers, json=payload, timeout=300)
         response.raise_for_status()
@@ -445,7 +420,6 @@ def get_supervision():
     
     try:
         content = call_gemini_api(get_supervision_prompt_text(), prompt_for_supervision)
-        # 确保返回的JSON结构与前端期望的完全一致
         supervision_data = {"status": "Complete", "content": content}
         return jsonify({"supervision": supervision_data})
     except Exception as e:
