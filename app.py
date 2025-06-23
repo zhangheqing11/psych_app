@@ -180,7 +180,7 @@ def get_supervision_prompt_text():
 * 区分观察事实与督导假设（使用『可能表明』『提示』等限定词）。
 * 整合至少2个理论视角（主体间性/依恋理论/关系精神分析等）。"""
 
-# --- 核心API调用函数 (已简化为只支持非流式) ---
+# --- 核心API调用函数 ---
 def call_api_sync(system_prompt, user_prompt, model='deepseek-chat'):
     """
     同步调用API，用于一次性获取完整结果。
@@ -205,13 +205,11 @@ def call_api_sync(system_prompt, user_prompt, model='deepseek-chat'):
 # --- 路由定义 ---
 @app.route('/')
 def serve_index():
-    # 此路由服务于静态的index.html文件
-    return send_from_directory(app.static_folder, 'index.html')
+    return "Psychologist Assistant Backend is running. Please open index.html in your browser."
 
-# --- 新增的用户认证和数据API ---
+# --- 用户认证和数据API ---
 @app.route('/api/register', methods=['POST'])
 def register():
-    """处理用户注册"""
     data = request.get_json()
     username = data.get('username')
     password = data.get('password')
@@ -232,7 +230,6 @@ def register():
 
 @app.route('/api/login', methods=['POST'])
 def login():
-    """处理用户登录"""
     data = request.get_json()
     username = data.get('username')
     password = data.get('password')
@@ -250,19 +247,15 @@ def login():
 
 @app.route('/api/data', methods=['GET'])
 def get_data():
-    """获取所有应用数据（除用户密码外）"""
     all_data = read_data()
-    # 从数据中移除用户信息，以确保安全
     data_to_send = {k: v for k, v in all_data.items() if k != 'users'}
     return jsonify(data_to_send)
 
 @app.route('/api/data', methods=['POST'])
 def save_data():
-    """保存应用数据"""
     new_data = request.get_json()
     all_data = read_data()
 
-    # 更新数据，但不触及users部分
     all_data['clients'] = new_data.get('clients', all_data.get('clients'))
     all_data['counselors'] = new_data.get('counselors', all_data.get('counselors'))
     all_data['appointments'] = new_data.get('appointments', all_data.get('appointments'))
@@ -271,7 +264,7 @@ def save_data():
     return jsonify({"message": "数据保存成功"}), 200
 
 
-# --- 保留的AI功能路由 ---
+# --- AI功能路由 ---
 @app.route('/api/upload-and-analyze', methods=['POST'])
 def upload_and_analyze():
     app.logger.info("[ROUTE_HIT] /api/upload-and-analyze")
