@@ -191,7 +191,7 @@
       }
       
       const renderPortal = () => {
-          if (isLoading || (currentUser && !appData)) {
+          if (isLoading || (currentUser && !appData && currentUser.role !== 'client')) {
               return <div className="min-h-screen flex items-center justify-center">正在加载...</div>
           }
           if (!currentUser) {
@@ -451,19 +451,28 @@
     // =================================== CLIENT PORTAL START ========================================
     // ================================================================================================
     const ClientPortal = ({ user, allData, onLogout, onSave, showAlert }) => {
-        const { useState, useMemo, useEffect } = React;
+        const { useState, useMemo, useEffect, useCallback } = React;
         const [isEditing, setIsEditing] = useState(false);
         const [clientProfile, setClientProfile] = useState(null);
 
+        // Fetch self data to get sensitive info like binding_code
         useEffect(() => {
-            if (allData && allData.clients) {
-                const profile = allData.clients.find(c => c.username === user.username);
-                setClientProfile(profile);
-            }
-        }, [allData, user.username]);
+            const fetchSelfData = async () => {
+                try {
+                    const res = await fetch(`/api/client/me/${user.username}`);
+                    if (!res.ok) throw new Error('Could not fetch client profile');
+                    const selfData = await res.json();
+                    setClientProfile(selfData);
+                } catch (error) {
+                    console.error(error);
+                    showAlert('无法加载您的个人信息。');
+                }
+            };
+            fetchSelfData();
+        }, [user.username]);
 
-        const assignedCounselor = clientProfile && allData.counselors ? allData.counselors.find(c => c.assignedClientIds?.includes(clientProfile.id)) : null;
-        const clientAppointments = clientProfile && allData.appointments ? allData.appointments.filter(a => a.clientId === clientProfile.id) : [];
+        const assignedCounselor = clientProfile && allData && allData.counselors ? allData.counselors.find(c => c.assignedClientIds?.includes(clientProfile.id)) : null;
+        const clientAppointments = clientProfile && allData && allData.appointments ? allData.appointments.filter(a => a.clientId === clientProfile.id) : [];
 
         const { totalHours, monthlyHours } = useMemo(() => {
             if (!clientAppointments) return { totalHours: 0, monthlyHours: 0 };
@@ -484,7 +493,7 @@
             showAlert("您的信息已成功更新！");
         };
 
-        if (!clientProfile) {
+        if (!clientProfile || !allData) {
             return <div className="min-h-screen flex items-center justify-center">正在加载您的信息...</div>;
         }
 
@@ -531,6 +540,13 @@
                            <p><strong>种族认同:</strong> {clientProfile.ethnicIdentity || '未提供'}</p>
                            <p><strong>个人经济:</strong> {clientProfile.personalFinance || '未提供'}</p>
                            <p><strong>家庭经济:</strong> {clientProfile.familyFinance || '未提供'}</p>
+                        </div>
+                        <div className="mt-4 border-t pt-4">
+                            <h3 className="font-semibold text-gray-700">咨询师添加口令</h3>
+                            <p className="text-xs text-gray-500 mt-1">请将此口令提供给您的咨询师，以便他们将您添加到他们的档案中。请勿泄露给他人。</p>
+                            <div className="mt-2 bg-blue-50 text-blue-800 font-mono text-lg tracking-widest p-3 rounded-md text-center">
+                                {clientProfile.binding_code}
+                            </div>
                         </div>
                     </div>
 
@@ -1412,17 +1428,15 @@
                 )}
 
                 <div className="flex justify-between items-center mb-6 pb-4 border-b">
-                  <h2 className="text-2xl font-semibold text-gray-700 flex items-center"><span className="mr-3 text-2xl">👥</span>{title}</h2>
-                  {isManagerView && 
+                    <h2 className="text-2xl font-semibold text-gray-700 flex items-center"><span className="mr-3 text-2xl">👥</span>{title}</h2>
                     <button onClick={handleButtonClick} className="bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2 px-4 rounded-lg flex items-center shadow-sm">
-                      <span className="mr-2">➕</span>{buttonText}
+                        <span className="mr-2">➕</span>{buttonText}
                     </button>
-                  }
                 </div>
                 <input type="text" placeholder="搜索来访者姓名..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="w-full p-3 mb-4 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"/>
                 {filteredClients.length > 0 ? (
                     <ul className="space-y-3">{filteredClients.map(client => (<li key={client.id} onClick={() => onSelectClient(client)} className="bg-gray-50 hover:bg-blue-50 border rounded-lg p-4 cursor-pointer flex justify-between items-center transition-all duration-200 hover:shadow-md"><div><p className="text-lg font-medium text-blue-700">{client.name} <span className="text-sm text-gray-500">({client.gender}, {client.age}岁)</span></p><p className="text-sm text-gray-600">加入日期: {client.joinDate}</p></div><span className="text-gray-400 font-bold">❯</span></li>))}</ul>
-                ) : <p className="text-center text-gray-500 py-8">暂无匹配的来访者。{isManagerView && '点击“添加新来访”开始。'}</p>}
+                ) : <p className="text-center text-gray-500 py-8">暂无匹配的来访者。点击“{buttonText}”开始。</p>}
             </div>
         );
     };
@@ -1831,4 +1845,4 @@
     ReactDOM.createRoot(document.getElementById('root')).render(<App />);
   </script>
 </body>
-            </html>
+</html>
