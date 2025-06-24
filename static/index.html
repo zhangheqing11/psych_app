@@ -451,22 +451,19 @@
         const { useState, useMemo, useEffect } = React;
         const [isEditing, setIsEditing] = useState(false);
         const [clientProfile, setClientProfile] = useState(null);
-        const [isCodeVisible, setIsCodeVisible] = useState(false); // 优化点2: State for code visibility
+        const [isCodeVisible, setIsCodeVisible] = useState(false);
 
         useEffect(() => {
-            // Fetch the public data first
             const profileFromAllData = allData.clients.find(c => c.username === user.username);
             
-            // Then fetch the user's own sensitive data
             fetch(`/api/client/me/${user.username}`)
-                .then(res => res.json())
+                .then(res => res.ok ? res.json() : Promise.reject('Failed to fetch profile'))
                 .then(selfData => {
-                    // Combine public and private data
                     setClientProfile({ ...profileFromAllData, ...selfData });
                 })
                 .catch(err => {
                     console.error("Could not fetch self profile:", err);
-                    setClientProfile(profileFromAllData); // Fallback to public data
+                    setClientProfile(profileFromAllData);
                 });
         }, [allData, user.username]);
 
@@ -486,7 +483,7 @@
         }, [clientAppointments]);
         
         const handleSaveProfile = (updatedProfile) => {
-            onSave(updatedProfile, true); // true indicates it's a client profile update
+            onSave(updatedProfile, true);
             setClientProfile(prev => ({...prev, ...updatedProfile}));
             setIsEditing(false);
             showAlert("您的信息已成功更新！");
@@ -529,16 +526,15 @@
                            <p><strong>姓名:</strong> {clientProfile.name}</p>
                            <p><strong>年龄:</strong> {clientProfile.age}</p>
                            <p><strong>性别:</strong> {clientProfile.gender}</p>
-                           <p><strong>联系方式:</strong> {clientProfile.contact}</p>
-                           {/* 优化点2: Display binding code with toggle */}
+                           <p><strong>联系方式:</strong> {clientProfile.contact || '未提供'}</p>
                            {clientProfile.binding_code && (
                              <div className="flex items-center gap-2">
                                <strong>添加口令:</strong>
                                <span className="font-mono bg-gray-100 px-2 py-1 rounded">
                                  {isCodeVisible ? clientProfile.binding_code : '******'}
                                </span>
-                               <button onClick={() => setIsCodeVisible(!isCodeVisible)} title={isCodeVisible ? "隐藏" : "显示"} className="text-gray-500 hover:text-gray-800">
-                                 {isCodeVisible ? '👁️' : '👁️‍🗨️'}
+                               <button onClick={() => setIsCodeVisible(!isCodeVisible)} title={isCodeVisible ? "隐藏" : "显示"} className="text-gray-500 hover:text-gray-800 text-lg">
+                                 {isCodeVisible ? '😑' : '👁️'}
                                </button>
                              </div>
                            )}
@@ -673,7 +669,7 @@
                     throw new Error(err.message || "保存失败");
                 }
                 showAlert("您的个人信息已更新。");
-                fetchData(); // Refresh data to show changes
+                fetchData();
             } catch(e) {
                 showAlert("保存失败: " + e.message);
             }
@@ -716,9 +712,9 @@
             case 'schedule':
                 const allVisibleClients = [
                     ...counselorData.assigned_clients,
-                    ...counselorData.unassigned_clients || []
+                    ...(counselorData.unassigned_clients || [])
                 ].reduce((acc, client) => {
-                    if (!acc.some(c => c.id === client.id)) {
+                    if (client && !acc.some(c => c.id === client.id)) {
                         acc.push(client);
                     }
                     return acc;
@@ -789,7 +785,7 @@
             name: counselor?.name || '',
             modality: counselor?.modality || '',
             clinicalBackground: counselor?.clinicalBackground || '',
-            contactInfo: counselor?.contactInfo || '' // 优化点3: 新增联系方式 state
+            contactInfo: counselor?.contactInfo || ''
         });
 
         const handleChange = (e) => {
@@ -835,14 +831,14 @@
             const currentMonth = new Date().getMonth();
             const currentYear = new Date().getFullYear();
             return counselors.map(counselor => {
-                const monthlyHours = appointments.filter(appt => {
+                const monthlyHours = (appointments || []).filter(appt => {
                     if (!appt.date) return false;
                     const apptDate = new Date(appt.date);
                     return appt.counselorId === counselor.id &&
                            apptDate.getMonth() === currentMonth &&
                            apptDate.getFullYear() === currentYear;
                 }).length;
-                const totalHours = appointments.filter(appt => appt.counselorId === counselor.id).length;
+                const totalHours = (appointments || []).filter(appt => appt.counselorId === counselor.id).length;
                 return { ...counselor, monthlyHours, totalHours };
             });
         }, [counselors, appointments]);
@@ -901,10 +897,9 @@
                                         <h3 className="text-xl font-bold text-blue-700">{loggedInCounselor.name}</h3>
                                         <button onClick={() => setIsEditingSelf(true)} className="text-xs font-medium text-blue-600 hover:underline">(编辑)</button>
                                     </div>
-                                    <p className="text-sm text-gray-600 mt-1">{loggedInCounselor.modality}</p>
-                                    {/* 优化点3: 显示联系方式 */}
-                                    {loggedInCounselor.contactInfo && <p className="text-sm text-gray-500 mt-2">联系方式: {loggedInCounselor.contactInfo}</p>}
-                                    {loggedInCounselor.clinicalBackground && <p className="text-sm text-gray-500 mt-2 whitespace-pre-wrap">{loggedInCounselor.clinicalBackground}</p>}
+                                    <p className="text-sm text-gray-600 mt-1">{loggedInCounselor.modality || '暂未填写流派'}</p>
+                                    {loggedInCounselor.contactInfo && <p className="text-sm text-gray-500 mt-2"><b>联系方式:</b> {loggedInCounselor.contactInfo}</p>}
+                                    {loggedInCounselor.clinicalBackground && <p className="text-sm text-gray-500 mt-2 whitespace-pre-wrap"><b>背景:</b> {loggedInCounselor.clinicalBackground}</p>}
                                </div>
                                <div className="text-right flex gap-4">
                                    <div><p className="text-sm text-gray-600">本月</p><p className="text-2xl font-bold text-blue-800">{loggedInCounselor.monthlyHours} <span className="text-base font-normal">小时</span></p></div>
@@ -912,7 +907,7 @@
                                </div>
                             </div>
                             <h4 className="text-sm font-bold text-gray-700 mt-4 border-t pt-3">负责来访:</h4>
-                            <div className="flex flex-wrap gap-2 mt-2">{clients.filter(c => loggedInCounselor.assignedClientIds?.includes(c.id)).map(client => <span key={client.id} className="text-xs bg-gray-200 text-gray-800 px-2 py-1 rounded-full">{client.name}</span>)}</div>
+                            <div className="flex flex-wrap gap-2 mt-2">{(clients || []).filter(c => (loggedInCounselor.assignedClientIds || []).includes(c.id)).map(client => <span key={client.id} className="text-xs bg-gray-200 text-gray-800 px-2 py-1 rounded-full">{client.name}</span>)}</div>
                         </div>
                      )}
                   </div>
@@ -921,7 +916,7 @@
                 {otherCounselors.length > 0 && <h3 className="text-xl font-semibold text-gray-800 mb-4 pt-6 border-t">{!isManagerView ? "其他咨询师" : "所有咨询师"}</h3>}
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                     {otherCounselors.map(counselor => {
-                        const assignedClients = clients.filter(client => counselor.assignedClientIds?.includes(client.id));
+                        const assignedClients = (clients || []).filter(client => (counselor.assignedClientIds || []).includes(client.id));
                         return (
                             <div key={counselor.id} className="bg-gray-50 border rounded-lg p-4 flex flex-col">
                                 <div className="flex-grow">
@@ -954,7 +949,7 @@
                         )
                     })}
                 </div>
-                 {counselors.length === 0 && isManagerView && <p className="text-center text-gray-500 py-8">暂无咨询师信息。点击“添加咨询师”开始。</p>}
+                 {(counselors || []).length === 0 && isManagerView && <p className="text-center text-gray-500 py-8">暂无咨询师信息。点击“添加咨询师”开始。</p>}
             </div>
         );
     };
@@ -1008,16 +1003,16 @@
                   {isManagerView && <div>
                     <label className="block text-sm font-medium">负责来访 (可点击选择)</label>
                     <div className="max-h-32 overflow-y-auto border rounded-md p-2 mt-1 select-none">
-                        {allClients.map(client => (
+                        {(allClients || []).map(client => (
                             <div 
                                 key={client.id} 
                                 onClick={() => handleClientSelection(client.id)}
-                                className={`p-1 rounded cursor-pointer ${formData.assignedClientIds.includes(client.id) ? 'bg-blue-200' : 'hover:bg-gray-100'}`}
+                                className={`p-1 rounded cursor-pointer ${(formData.assignedClientIds || []).includes(client.id) ? 'bg-blue-200' : 'hover:bg-gray-100'}`}
                             >
                                 <span className="text-sm text-gray-800">{client.name}</span>
                             </div>
                         ))}
-                         {allClients.length === 0 && <p className="text-xs text-gray-400 text-center py-2">暂无来访者</p>}
+                         {(allClients || []).length === 0 && <p className="text-xs text-gray-400 text-center py-2">暂无来访者</p>}
                     </div>
                   </div>}
 
@@ -1098,7 +1093,7 @@
         
         const appointmentsByHour = useMemo(() => {
             const dateStr = currentDate.toISOString().split('T')[0];
-            const filtered = appointments.filter(appt => appt.date === dateStr);
+            const filtered = (appointments || []).filter(appt => appt.date === dateStr);
             const grouped = {};
             filtered.forEach(appt => {
                 const hour = appt.time.substring(0, 2);
@@ -1125,8 +1120,8 @@
                             {hourAppointments.length > 0 ? (
                                 hourAppointments.map(appointment => (
                                     <div key={appointment.id} className="bg-blue-100 border-l-4 border-blue-500 p-2 rounded-r-lg cursor-pointer hover:bg-blue-200" onClick={() => onSelectAppointment(appointment)}>
-                                        <p className="font-bold text-sm text-blue-800">{clients.find(c => c.id === appointment.clientId)?.name || '未知来访'}</p>
-                                        <p className="text-xs text-gray-600">咨询师: {counselors.find(c => c.id === appointment.counselorId)?.name || '未知咨询师'}</p>
+                                        <p className="font-bold text-sm text-blue-800">{(clients || []).find(c => c.id === appointment.clientId)?.name || '未知来访'}</p>
+                                        <p className="text-xs text-gray-600">咨询师: {(counselors || []).find(c => c.id === appointment.counselorId)?.name || '未知咨询师'}</p>
                                         {appointment.location && <p className="text-xs text-gray-600">地点: {appointment.location}</p>}
                                         {appointment.notes && <p className="text-xs text-gray-500 mt-1 italic">"{appointment.notes}"</p>}
                                     </div>
@@ -1166,7 +1161,7 @@
     const ScheduleOverview = ({ appointments }) => {
         const { useMemo } = React;
         const appointmentsByDate = useMemo(() => {
-            return appointments.reduce((acc, appt) => {
+            return (appointments || []).reduce((acc, appt) => {
                 if(appt.date) {
                     (acc[appt.date] = acc[appt.date] || []).push(appt);
                 }
@@ -1248,8 +1243,8 @@
             date: appointmentToEdit?.date || new Date().toISOString().split('T')[0],
             time: appointmentToEdit?.time || '09:00',
             location: appointmentToEdit?.location || '',
-            clientId: appointmentToEdit?.clientId || (clients[0]?.id || ''),
-            counselorId: appointmentToEdit?.counselorId || (counselors[0]?.id || ''),
+            clientId: appointmentToEdit?.clientId || ((clients || [])[0]?.id || ''),
+            counselorId: appointmentToEdit?.counselorId || ((counselors || [])[0]?.id || ''),
             notes: appointmentToEdit?.notes || '',
         });
         
@@ -1337,7 +1332,8 @@
                 <div className="custom-modal-content w-full max-w-lg">
                     <h3 className="text-xl font-semibold mb-4">负责新来访</h3>
                     <div className="max-h-80 overflow-y-auto text-left space-y-3 pr-2">
-                        {unassignedClients.length > 0 ? unassignedClients.map(client => (
+                        {/* BUG FIX: Added `|| []` to prevent crash if unassignedClients is undefined */}
+                        {(unassignedClients || []).length > 0 ? (unassignedClients || []).map(client => (
                             <div key={client.id} className="p-3 border rounded-md flex flex-col sm:flex-row justify-between items-center gap-3">
                                 <span className="font-medium text-gray-800">{client.name} (ID: ...{client.id.slice(-4)})</span>
                                 <div className="flex items-center gap-2">
@@ -1414,10 +1410,9 @@
             )
         }
 
-        const filteredClients = clients.filter(client => client.name.toLowerCase().includes(searchTerm.toLowerCase()));
+        const filteredClients = (clients || []).filter(client => client.name.toLowerCase().includes(searchTerm.toLowerCase()));
         
         const title = isManagerView ? '来访者管理' : '我的来访者';
-        // 优化点1: 按钮文字修正
         const buttonText = isManagerView ? '添加新来访' : '负责新来访';
         const handleButtonClick = () => {
             if (isManagerView) {
@@ -1474,7 +1469,7 @@
         onSave(clientData, password);
       };
       
-      const potentialReferrers = allClients ? allClients.filter(c => c.id !== clientToEdit?.id) : [];
+      const potentialReferrers = (allClients || []).filter(c => c.id !== clientToEdit?.id);
       
       return (
         <div className="bg-white p-6 rounded-lg shadow-md animate-fadeIn">
@@ -1570,6 +1565,7 @@
             try {
                 const clientInfoForPrompt = { ...currentClient };
                 delete clientInfoForPrompt.sessions;
+                delete clientInfoForPrompt.binding_code;
 
                 const [conceptualizationRes, assessmentRes] = await Promise.all([
                     fetch('/api/ai/conceptualization', {
@@ -1654,6 +1650,7 @@
           try {
               const clientInfoForPrompt = { ...clientForSupervision };
               delete clientInfoForPrompt.sessions;
+              delete clientInfoForPrompt.binding_code;
 
               const response = await fetch('/api/ai/supervision', {
                 method: 'POST',
@@ -1754,7 +1751,7 @@
             <div>
                 <div className="flex justify-between items-center mb-3"><h3 className="text-lg font-semibold text-gray-700 flex items-center"><span className="mr-2">📅</span>咨询会话工作流</h3><button onClick={() => setShowAddSession(true)} className="text-sm bg-blue-600 hover:bg-blue-700 text-white font-semibold py-1 px-3 rounded-md shadow-sm">添加新会话</button></div>
                 {showAddSession && (<div className="p-4 mb-4 bg-blue-50 border rounded-lg flex items-center gap-4 animate-fadeIn"><input type="date" value={newSessionDate} onChange={e => setNewSessionDate(e.target.value)} className="p-2 border rounded-md"/><button onClick={handleCreateSession} className="bg-blue-500 hover:bg-blue-600 text-white py-2 px-4 rounded-md shadow-sm">创建</button><button onClick={() => setShowAddSession(false)} className="text-gray-600">取消</button></div>)}
-                <div className="space-y-4">{client.sessions?.length > 0 ? [...client.sessions].reverse().map(session => <SessionCard key={session.id} session={session} />) : <p className="text-center text-gray-500 py-4">暂无咨询会话记录。</p>}</div>
+                <div className="space-y-4">{(client.sessions || []).length > 0 ? [...client.sessions].reverse().map(session => <SessionCard key={session.id} session={session} />) : <p className="text-center text-gray-500 py-4">暂无咨询会话记录。</p>}</div>
             </div>
         </div>
       );
@@ -1853,4 +1850,4 @@
     ReactDOM.createRoot(document.getElementById('root')).render(<App />);
   </script>
 </body>
-        </html>
+      </html>
