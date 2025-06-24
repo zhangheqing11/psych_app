@@ -129,7 +129,6 @@
                   const err = await response.json();
                   throw new Error(err.message || "保存失败");
               }
-              // No automatic fetchData here to allow for optimistic updates
           } catch (error) {
               console.error("Failed to save data:", error);
               showAlert(`保存数据失败: ${error.message}`);
@@ -145,7 +144,7 @@
             });
             const data = await response.json();
             if (response.ok) {
-                showAlert(data.message); // The message from backend now contains the binding code
+                showAlert(data.message);
                 const user = { username: data.username, role: data.role };
                 localStorage.setItem('currentUser', JSON.stringify(user));
                 setCurrentUser(user);
@@ -233,7 +232,7 @@
         const [password, setPassword] = useState('');
         const [confirmPassword, setConfirmPassword] = useState('');
         const [role, setRole] = useState('counselor');
-        const [secretCode, setSecretCode] = useState(''); // Optimization 1: State for secret code
+        const [secretCode, setSecretCode] = useState('');
 
         const handleSubmit = async (e) => {
             e.preventDefault();
@@ -242,7 +241,6 @@
             if (mode === 'register') {
               if (password.length < 6) { showAlert('密码必须至少为6个字符。'); return; }
               if (password !== confirmPassword) { showAlert('两次输入的密码不匹配！'); return; }
-              // Optimization 1: Check for secret code on counselor registration
               if (role === 'counselor' && !secretCode) { showAlert('请输入咨询师/管理注册口令。'); return; }
               await onRegister(username, password, role, secretCode);
             } else {
@@ -268,7 +266,6 @@
                         {mode === 'register' && (
                           <>
                             <div><label className="text-sm font-medium text-gray-700">确认密码</label><input type="password" value={confirmPassword} onChange={e => setConfirmPassword(e.target.value)} className="w-full p-2 mt-1 border rounded-md" required/></div>
-                            {/* Optimization 1: Added secret code input for counselor registration */}
                             {role === 'counselor' && (
                               <div><label className="text-sm font-medium text-gray-700">注册口令</label><input type="password" value={secretCode} onChange={e => setSecretCode(e.target.value)} placeholder="咨询师/管理员需要口令" className="w-full p-2 mt-1 border rounded-md" required/></div>
                             )}
@@ -338,7 +335,7 @@
         };
 
         const handleDeleteCounselor = (counselorId) => {
-            const counselorToDelete = allData.counselor_data.counselors.find(c => c.id !== counselorId);
+            const counselorToDelete = allData.counselor_data.counselors.find(c => c.id === counselorId);
             if(!counselorToDelete) return;
             if (allData.counselor_data.appointments.some(a => a.counselorId === counselorId)) {
                 return showAlert('无法删除该咨询师，其仍有关联的日程安排。');
@@ -454,12 +451,23 @@
         const { useState, useMemo, useEffect } = React;
         const [isEditing, setIsEditing] = useState(false);
         const [clientProfile, setClientProfile] = useState(null);
+        const [isCodeVisible, setIsCodeVisible] = useState(false); // 优化点2: State for code visibility
 
         useEffect(() => {
-            if (allData && allData.clients) {
-                const profile = allData.clients.find(c => c.username === user.username);
-                setClientProfile(profile);
-            }
+            // Fetch the public data first
+            const profileFromAllData = allData.clients.find(c => c.username === user.username);
+            
+            // Then fetch the user's own sensitive data
+            fetch(`/api/client/me/${user.username}`)
+                .then(res => res.json())
+                .then(selfData => {
+                    // Combine public and private data
+                    setClientProfile({ ...profileFromAllData, ...selfData });
+                })
+                .catch(err => {
+                    console.error("Could not fetch self profile:", err);
+                    setClientProfile(profileFromAllData); // Fallback to public data
+                });
         }, [allData, user.username]);
 
         const assignedCounselor = clientProfile && allData.counselors ? allData.counselors.find(c => c.assignedClientIds?.includes(clientProfile.id)) : null;
@@ -479,7 +487,7 @@
         
         const handleSaveProfile = (updatedProfile) => {
             onSave(updatedProfile, true); // true indicates it's a client profile update
-            setClientProfile(updatedProfile);
+            setClientProfile(prev => ({...prev, ...updatedProfile}));
             setIsEditing(false);
             showAlert("您的信息已成功更新！");
         };
@@ -522,6 +530,18 @@
                            <p><strong>年龄:</strong> {clientProfile.age}</p>
                            <p><strong>性别:</strong> {clientProfile.gender}</p>
                            <p><strong>联系方式:</strong> {clientProfile.contact}</p>
+                           {/* 优化点2: Display binding code with toggle */}
+                           {clientProfile.binding_code && (
+                             <div className="flex items-center gap-2">
+                               <strong>添加口令:</strong>
+                               <span className="font-mono bg-gray-100 px-2 py-1 rounded">
+                                 {isCodeVisible ? clientProfile.binding_code : '******'}
+                               </span>
+                               <button onClick={() => setIsCodeVisible(!isCodeVisible)} title={isCodeVisible ? "隐藏" : "显示"} className="text-gray-500 hover:text-gray-800">
+                                 {isCodeVisible ? '👁️' : '👁️‍🗨️'}
+                               </button>
+                             </div>
+                           )}
                            <p className="sm:col-span-2"><strong>职业/年级:</strong> {clientProfile.grade || '未提供'}</p>
                            <p><strong>性取向:</strong> {clientProfile.sexualOrientation || '未提供'}</p>
                            <p><strong>心理状态评分:</strong> {clientProfile.mentalStateScore}/10</p>
@@ -640,7 +660,6 @@
             }).then(res => { if(!res.ok) showAlert("日程保存失败")});
         };
         
-        // Optimization 2: Handler for counselor to save their own profile
         const handleSaveSelfProfile = async (profileData) => {
             const payload = { update_profile: profileData };
             try {
@@ -691,13 +710,22 @@
                           clients={counselorData.assigned_clients} 
                           appointments={counselorData.appointments} 
                           currentUser={user}
-                          onSaveProfile={handleSaveSelfProfile} // Optimization 2: Pass save handler
+                          onSaveProfile={handleSaveSelfProfile}
                           isManagerView={false}
                        />;
             case 'schedule':
+                const allVisibleClients = [
+                    ...counselorData.assigned_clients,
+                    ...counselorData.unassigned_clients || []
+                ].reduce((acc, client) => {
+                    if (!acc.some(c => c.id === client.id)) {
+                        acc.push(client);
+                    }
+                    return acc;
+                }, []);
                 return <ScheduleSection 
                           appointments={counselorData.appointments} 
-                          clients={counselorData.counselors.flatMap(c => c.assignedClientIds).concat(counselorData.assigned_clients.map(c=>c.id)).reduce((acc,id) => { if(!acc.includes(id)) acc.push(id); return acc;}, []).map(id => counselorData.assigned_clients.find(c=>c.id===id)).filter(Boolean)}
+                          clients={allVisibleClients}
                           counselors={counselorData.counselors} 
                           onUpdateAppointments={handleUpdateAppointments}
                        />;
@@ -755,13 +783,13 @@
     // ====================================== SHARED COMPONENTS =======================================
     // ================================================================================================
     
-    // Optimization 2: New component for counselor to edit their own profile
     const CounselorSelfEditForm = ({ counselor, onSave, onCancel }) => {
         const { useState } = React;
         const [formData, setFormData] = useState({
             name: counselor?.name || '',
             modality: counselor?.modality || '',
-            clinicalBackground: counselor?.clinicalBackground || ''
+            clinicalBackground: counselor?.clinicalBackground || '',
+            contactInfo: counselor?.contactInfo || '' // 优化点3: 新增联系方式 state
         });
 
         const handleChange = (e) => {
@@ -783,6 +811,7 @@
                 <h3 className="text-xl font-semibold text-gray-800 mb-4 border-b pb-3">编辑我的档案</h3>
                 <form onSubmit={handleSubmit} className="space-y-4 max-w-lg mx-auto">
                     <div><label className="block text-sm font-medium">姓名 <span className="text-red-500">*</span></label><input type="text" name="name" value={formData.name} onChange={handleChange} required className="w-full p-2 border rounded-md" /></div>
+                    <div><label className="block text-sm font-medium">联系方式</label><input type="text" name="contactInfo" value={formData.contactInfo} onChange={handleChange} placeholder="例如：email@example.com" className="w-full p-2 border rounded-md"/></div>
                     <div><label className="block text-sm font-medium">擅长咨询流派</label><input type="text" name="modality" value={formData.modality} onChange={handleChange} className="w-full p-2 border rounded-md" placeholder="例如：CBT, 精神动力学"/></div>
                     <div><label className="block text-sm font-medium">临床和学术背景</label><textarea name="clinicalBackground" value={formData.clinicalBackground} onChange={handleChange} rows="4" className="w-full p-2 border rounded-md" placeholder="例如：XX大学临床心理学硕士，XX医院实习经验"></textarea></div>
                     <div className="flex justify-end space-x-3 pt-4 border-t mt-6">
@@ -799,7 +828,7 @@
         const { useState, useMemo } = React;
         const [view, setView] = useState('list'); 
         const [counselorToEdit, setCounselorToEdit] = useState(null);
-        const [isEditingSelf, setIsEditingSelf] = useState(false); // Optimization 2 state
+        const [isEditingSelf, setIsEditingSelf] = useState(false);
         
         const counselorsWithHours = useMemo(() => {
             if(!counselors) return [];
@@ -870,11 +899,11 @@
                                <div>
                                     <div className="flex items-center gap-4">
                                         <h3 className="text-xl font-bold text-blue-700">{loggedInCounselor.name}</h3>
-                                         {/* Optimization 2: Add Edit button */}
                                         <button onClick={() => setIsEditingSelf(true)} className="text-xs font-medium text-blue-600 hover:underline">(编辑)</button>
                                     </div>
                                     <p className="text-sm text-gray-600 mt-1">{loggedInCounselor.modality}</p>
-                                    {/* Optimization 2: Display new field */}
+                                    {/* 优化点3: 显示联系方式 */}
+                                    {loggedInCounselor.contactInfo && <p className="text-sm text-gray-500 mt-2">联系方式: {loggedInCounselor.contactInfo}</p>}
                                     {loggedInCounselor.clinicalBackground && <p className="text-sm text-gray-500 mt-2 whitespace-pre-wrap">{loggedInCounselor.clinicalBackground}</p>}
                                </div>
                                <div className="text-right flex gap-4">
@@ -930,7 +959,6 @@
         );
     };
     
-    // This form is now only for managers to edit/add counselors
     const CounselorForm = ({ onSave, onCancel, counselorToEdit, allClients, isManagerView }) => {
         const { useState } = React;
         const [formData, setFormData] = useState({
@@ -938,7 +966,8 @@
             modality: counselorToEdit?.modality || '',
             username: counselorToEdit?.username || '',
             assignedClientIds: counselorToEdit?.assignedClientIds || [],
-            clinicalBackground: counselorToEdit?.clinicalBackground || ''
+            clinicalBackground: counselorToEdit?.clinicalBackground || '',
+            contactInfo: counselorToEdit?.contactInfo || ''
         });
         const [password, setPassword] = useState('');
         
@@ -974,7 +1003,6 @@
                   <div><label className="block text-sm font-medium">用户名 (用于登录) <span className="text-red-500">*</span></label><input type="text" name="username" value={formData.username} onChange={handleChange} required className="w-full p-2 border rounded-md" disabled={!!counselorToEdit} /></div>
                   {isManagerView && <div><label className="block text-sm font-medium">密码 {counselorToEdit ? '(留空即不修改)' : <span className="text-red-500">*</span>}</label><input type="password" value={password} onChange={e=>setPassword(e.target.value)} className="w-full p-2 border rounded-md" /></div>}
                   <div><label className="block text-sm font-medium">擅长咨询流派</label><input type="text" name="modality" value={formData.modality} onChange={handleChange} className="w-full p-2 border rounded-md" /></div>
-                  {/* Optimization 2: Field added to manager's form as well */}
                   <div><label className="block text-sm font-medium">临床和学术背景</label><textarea name="clinicalBackground" value={formData.clinicalBackground} onChange={handleChange} rows="3" className="w-full p-2 border rounded-md"></textarea></div>
 
                   {isManagerView && <div>
@@ -1006,7 +1034,7 @@
 
     const ScheduleSection = ({ appointments, clients, counselors, onUpdateAppointments }) => {
         const { useState } = React;
-        const [view, setView] = useState('daily'); // 'daily', 'overview', 'form'
+        const [view, setView] = useState('daily');
         const [appointmentToEdit, setAppointmentToEdit] = useState(null);
         
         if (view === 'form') {
@@ -1083,7 +1111,7 @@
         }, [appointments, currentDate]);
 
         const renderHourlySchedule = () => {
-            const hours = Array.from({length: 15}, (_, i) => 8 + i); // 8:00 to 22:00
+            const hours = Array.from({length: 15}, (_, i) => 8 + i);
 
             return hours.map(hour => {
                 const hourStr = String(hour).padStart(2, '0');
@@ -1097,8 +1125,8 @@
                             {hourAppointments.length > 0 ? (
                                 hourAppointments.map(appointment => (
                                     <div key={appointment.id} className="bg-blue-100 border-l-4 border-blue-500 p-2 rounded-r-lg cursor-pointer hover:bg-blue-200" onClick={() => onSelectAppointment(appointment)}>
-                                        <p className="font-bold text-sm text-blue-800">{clients.find(c => c.id === appointment.clientId)?.name}</p>
-                                        <p className="text-xs text-gray-600">咨询师: {counselors.find(c => c.id === appointment.counselorId)?.name}</p>
+                                        <p className="font-bold text-sm text-blue-800">{clients.find(c => c.id === appointment.clientId)?.name || '未知来访'}</p>
+                                        <p className="text-xs text-gray-600">咨询师: {counselors.find(c => c.id === appointment.counselorId)?.name || '未知咨询师'}</p>
                                         {appointment.location && <p className="text-xs text-gray-600">地点: {appointment.location}</p>}
                                         {appointment.notes && <p className="text-xs text-gray-500 mt-1 italic">"{appointment.notes}"</p>}
                                     </div>
@@ -1270,8 +1298,7 @@
         );
     };
 
-    // Optimization 3: New component for the assignment modal with binding code
-    const AssignClientModal = ({ unassignedClients, onAssign, onCancel, currentUser, showAlert, fetchData }) => {
+    const AssignClientModal = ({ unassignedClients, onCancel, currentUser, showAlert, fetchData }) => {
         const [bindingCodes, setBindingCodes] = useState({});
 
         const handleCodeChange = (clientId, code) => {
@@ -1291,14 +1318,14 @@
                     body: JSON.stringify({
                         counselorUsername: currentUser.username,
                         clientId,
-                        binding_code: code
+                        binding_code: code.toUpperCase()
                     }),
                 });
                 const data = await res.json();
                 if (!res.ok) throw new Error(data.message || "分配失败");
                 
                 showAlert('来访者已成功分配到您的名下！');
-                fetchData(); // Re-fetch data to update lists
+                fetchData();
                 onCancel();
             } catch (err) {
                 showAlert(err.message);
@@ -1308,7 +1335,7 @@
         return (
             <div className="custom-modal-backdrop">
                 <div className="custom-modal-content w-full max-w-lg">
-                    <h3 className="text-xl font-semibold mb-4">选择要负责的来访者</h3>
+                    <h3 className="text-xl font-semibold mb-4">负责新来访</h3>
                     <div className="max-h-80 overflow-y-auto text-left space-y-3 pr-2">
                         {unassignedClients.length > 0 ? unassignedClients.map(client => (
                             <div key={client.id} className="p-3 border rounded-md flex flex-col sm:flex-row justify-between items-center gap-3">
@@ -1318,13 +1345,14 @@
                                         type="text"
                                         placeholder="添加口令"
                                         maxLength="6"
+                                        style={{textTransform: 'uppercase'}}
                                         value={bindingCodes[client.id] || ''}
-                                        onChange={(e) => handleCodeChange(client.id, e.target.value.toUpperCase())}
+                                        onChange={(e) => handleCodeChange(client.id, e.target.value)}
                                         className="p-1 border rounded-md w-24 text-center"
                                     />
                                     <button 
                                         onClick={() => handleAssignClick(client.id)} 
-                                        className="bg-green-600 hover:bg-green-700 text-white text-xs font-semibold py-1 px-3 rounded"
+                                        className="bg-green-600 hover:bg-green-700 text-white text-xs font-semibold py-1.5 px-3 rounded"
                                     >
                                         负责
                                     </button>
@@ -1389,6 +1417,7 @@
         const filteredClients = clients.filter(client => client.name.toLowerCase().includes(searchTerm.toLowerCase()));
         
         const title = isManagerView ? '来访者管理' : '我的来访者';
+        // 优化点1: 按钮文字修正
         const buttonText = isManagerView ? '添加新来访' : '负责新来访';
         const handleButtonClick = () => {
             if (isManagerView) {
@@ -1824,4 +1853,4 @@
     ReactDOM.createRoot(document.getElementById('root')).render(<App />);
   </script>
 </body>
-</html>
+        </html>
