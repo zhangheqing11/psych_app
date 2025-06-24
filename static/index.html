@@ -724,6 +724,7 @@
                           clients={allVisibleClients}
                           counselors={counselorData.counselors} 
                           onUpdateAppointments={handleUpdateAppointments}
+                          currentUser={user}
                        />;
             case 'clientDetail':
                 return selectedClient ? 
@@ -740,7 +741,7 @@
             case 'cbtApplication':
                 return <CBTSection showAlert={showAlert}/>;
             default:
-                return <ScheduleSection appointments={counselorData.appointments} clients={counselorData.assigned_clients} counselors={counselorData.counselors} onUpdateAppointments={handleUpdateAppointments} />;
+                return <ScheduleSection appointments={counselorData.appointments} clients={counselorData.assigned_clients} counselors={counselorData.counselors} onUpdateAppointments={handleUpdateAppointments} currentUser={user} />;
             }
         };
 
@@ -1027,7 +1028,7 @@
         );
     };
 
-    const ScheduleSection = ({ appointments, clients, counselors, onUpdateAppointments }) => {
+    const ScheduleSection = ({ appointments, clients, counselors, onUpdateAppointments, currentUser }) => {
         const { useState } = React;
         const [view, setView] = useState('daily');
         const [appointmentToEdit, setAppointmentToEdit] = useState(null);
@@ -1070,6 +1071,7 @@
                         clients={clients}
                         counselors={counselors}
                         onSelectAppointment={(appt) => { setAppointmentToEdit(appt); setView('form'); }}
+                        currentUser={currentUser}
                     />
                 }
 
@@ -1079,9 +1081,13 @@
         );
     };
     
-    const ScheduleDailyView = ({ appointments, clients, counselors, onSelectAppointment }) => {
+    const ScheduleDailyView = ({ appointments, clients, counselors, onSelectAppointment, currentUser }) => {
         const { useState, useMemo } = React;
         const [currentDate, setCurrentDate] = useState(new Date());
+        
+        const currentCounselorId = useMemo(() => {
+            return (counselors || []).find(c => c.username === currentUser.username)?.id;
+        }, [counselors, currentUser]);
 
         const changeDay = (offset) => {
             setCurrentDate(prev => {
@@ -1118,14 +1124,22 @@
                         <td className="p-1">
                           <div className="time-slot">
                             {hourAppointments.length > 0 ? (
-                                hourAppointments.map(appointment => (
-                                    <div key={appointment.id} className="bg-blue-100 border-l-4 border-blue-500 p-2 rounded-r-lg cursor-pointer hover:bg-blue-200" onClick={() => onSelectAppointment(appointment)}>
-                                        <p className="font-bold text-sm text-blue-800">{(clients || []).find(c => c.id === appointment.clientId)?.name || '未知来访'}</p>
-                                        <p className="text-xs text-gray-600">咨询师: {(counselors || []).find(c => c.id === appointment.counselorId)?.name || '未知咨询师'}</p>
-                                        {appointment.location && <p className="text-xs text-gray-600">地点: {appointment.location}</p>}
-                                        {appointment.notes && <p className="text-xs text-gray-500 mt-1 italic">"{appointment.notes}"</p>}
-                                    </div>
-                                ))
+                                hourAppointments.map(appointment => {
+                                    // 优化点 1: 匿名化非当前咨询师的来访者姓名
+                                    const isOwnAppointment = appointment.counselorId === currentCounselorId;
+                                    const clientName = isOwnAppointment 
+                                        ? (clients || []).find(c => c.id === appointment.clientId)?.name || '未知来访'
+                                        : '来访者';
+
+                                    return (
+                                        <div key={appointment.id} className={`${isOwnAppointment ? 'bg-blue-100 border-blue-500' : 'bg-gray-100 border-gray-400'} border-l-4 p-2 rounded-r-lg cursor-pointer hover:opacity-80`} onClick={() => onSelectAppointment(appointment)}>
+                                            <p className={`font-bold text-sm ${isOwnAppointment ? 'text-blue-800' : 'text-gray-700'}`}>{clientName}</p>
+                                            <p className="text-xs text-gray-600">咨询师: {(counselors || []).find(c => c.id === appointment.counselorId)?.name || '未知咨询师'}</p>
+                                            {appointment.location && <p className="text-xs text-gray-600">地点: {appointment.location}</p>}
+                                            {appointment.notes && <p className="text-xs text-gray-500 mt-1 italic">"{appointment.notes}"</p>}
+                                        </div>
+                                    );
+                                })
                             ) : (<div className="h-10"></div>)}
                           </div>
                         </td>
@@ -1294,6 +1308,12 @@
     };
 
     const AssignClientModal = ({ unassignedClients, onCancel, currentUser, showAlert, fetchData }) => {
+        // BUG FIX: Add a stronger guard to prevent rendering if the crucial prop is missing.
+        if (!Array.isArray(unassignedClients)) {
+            // This prevents the crash by rendering nothing if the array isn't ready.
+            return null;
+        }
+
         const [bindingCodes, setBindingCodes] = useState({});
 
         const handleCodeChange = (clientId, code) => {
@@ -1332,8 +1352,7 @@
                 <div className="custom-modal-content w-full max-w-lg">
                     <h3 className="text-xl font-semibold mb-4">负责新来访</h3>
                     <div className="max-h-80 overflow-y-auto text-left space-y-3 pr-2">
-                        {/* BUG FIX: Added `|| []` to prevent crash if unassignedClients is undefined */}
-                        {(unassignedClients || []).length > 0 ? (unassignedClients || []).map(client => (
+                        {unassignedClients.length > 0 ? unassignedClients.map(client => (
                             <div key={client.id} className="p-3 border rounded-md flex flex-col sm:flex-row justify-between items-center gap-3">
                                 <span className="font-medium text-gray-800">{client.name} (ID: ...{client.id.slice(-4)})</span>
                                 <div className="flex items-center gap-2">
@@ -1850,4 +1869,4 @@
     ReactDOM.createRoot(document.getElementById('root')).render(<App />);
   </script>
 </body>
-      </html>
+                  </html>
