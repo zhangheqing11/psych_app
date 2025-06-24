@@ -115,7 +115,7 @@ def get_assessment_prompt_text():
 	自我身份认同：对自己的定义（认为自己是谁）、价值观、能力与局限性。在青少年时期逐渐稳定
 	自我评价：反映个人能力在主观和客观的相符程度，也包括对自我理想意象的幻想（即理想的自我是什么样的）。思想和行动符合，我们的内在理想就会感到自我实现和自豪；否则就会产生内疚、失败和一无所有处的感觉。
 	1.2自尊管理：从打击中恢复原状的能力。
-	包括自尊の脆弱性（水平高低、稳定性）、应对挫败自尊的方式（自恋自大或自我挫败/受虐，而更健康的方式是直面问题 而不是困在自我中）、利用他人调节自尊。自尊是对自己的尊敬和或欣赏，自尊问题使我们变得无法承受情感和焦虑，无法现实评价能力和局限，无法控制我们的冲动，无法放松，等等。
+	包括自尊の脆弱性（水平高低、稳定性）、应对挫败自尊的方式（自恋自大或自我挫败/受虐，而更健康的方式是直面问题 而不是困在自我中）、利用他人调节自尊。自尊是对自己的尊敬和或欣赏，自尊问题使我们变得无法承受情感和焦虑，无法现实评价能力和局-限，无法控制我们的冲动，无法放松，等等。
 	此外，自我评价的问题也会导致自我知觉的扭曲和自尊管理的困难。有的人会高估自己的能力(夸大)，而有的人会低估自己的能力（抑郁），又或者理想化他人。（嫉妒具有攻击性，而羡慕具有靠近的倾向）
 	2.人际关系功能：保持稳定、信任、亲密关系的能力
 	关键：1.关系中对自己和对方的信任感、2.感知度：既好又坏的立体性、独特个性的独立性（明白他人的思想和感受与自己不同，心智化能力）、过去到现在与未来可能变化的完整性。3.安全感：抵抗面对分离、分歧、消极情绪。4.亲密性（边界情况）；5.相互依存度：合适的依存是既给予也享受的。
@@ -202,7 +202,6 @@ def register():
     if not all([username, password, role]):
         return jsonify({"message": "用户名、密码和角色都是必填项"}), 400
     
-    # 优化点 1: 咨询师注册需要口令
     if role == 'counselor' and secret_code != COUNSELOR_SECRET:
         return jsonify({"message": "注册口令不正确"}), 403
 
@@ -222,7 +221,6 @@ def register():
             all_data['counselor_data']['clients'] = []
         
         if not any(c.get('username') == username for c in all_data['counselor_data']['clients']):
-            # 优化点 3: 为新来访者生成绑定口令
             binding_code = ''.join(random.choices(string.ascii_uppercase + string.digits, k=6))
             new_client_entry = {
                 "id": f"client-{int(time.time())}", "username": username, "name": username, 
@@ -232,7 +230,7 @@ def register():
             }
             all_data['counselor_data']['clients'].append(new_client_entry)
             response_data["binding_code"] = binding_code
-            response_data["message"] = f"注册成功！请务必保存您的添加口令: {binding_code}。您的咨询师将需要此口令来将您添加到他们的档案中。"
+            response_data["message"] = f"注册成功！请务必保存您的添加口令: {binding_code}。\n您的咨询师将需要此口令来将您添加到他们的档案中。"
 
 
     elif role == 'counselor':
@@ -243,7 +241,8 @@ def register():
             new_counselor_entry = {
                 "id": f"counselor-{int(time.time())}", "username": username, "name": username, 
                 "modality": "待填写", 
-                "clinicalBackground": "", # 优化点 2: 添加新字段
+                "clinicalBackground": "",
+                "contactInfo": "", # 优化点3: 添加联系方式字段
                 "assignedClientIds": []
             }
             all_data['counselor_data']['counselors'].append(new_counselor_entry)
@@ -283,7 +282,6 @@ def get_manager_data():
 @app.route('/api/data/manager', methods=['POST'])
 def save_manager_data():
     new_data = request.get_json()
-    # 管理员有权覆盖所有数据
     write_data(new_data)
     return jsonify({"message": "平台数据已更新"}), 200
 
@@ -325,12 +323,12 @@ def save_counselor_data(username):
 
     counselor_profile = all_data['counselor_data']['counselors'][counselor_index]
     
-    # 优化点 2: 允许咨询师更新自己的档案
     if 'update_profile' in new_data:
         profile_updates = new_data['update_profile']
         counselor_profile['name'] = profile_updates.get('name', counselor_profile['name'])
         counselor_profile['modality'] = profile_updates.get('modality', counselor_profile['modality'])
         counselor_profile['clinicalBackground'] = profile_updates.get('clinicalBackground', counselor_profile.get('clinicalBackground', ''))
+        counselor_profile['contactInfo'] = profile_updates.get('contactInfo', counselor_profile.get('contactInfo', '')) # 优化点3: 保存联系方式
         all_data['counselor_data']['counselors'][counselor_index] = counselor_profile
     
     allowed_client_ids = set(counselor_profile.get('assignedClientIds', []))
@@ -338,13 +336,12 @@ def save_counselor_data(username):
     if 'clients' in new_data:
         for updated_client in new_data.get('clients', []):
             if updated_client.get('id') in allowed_client_ids:
-                client_index = next((i for i, client in enumerate(all_data['counselor_data']['clients']) if client.get('id') == updated_client.get('id')), -1)
-                if client_index != -1:
-                    # 保留核心数据不被覆盖
-                    existing_sessions = all_data['counselor_data']['clients'][client_index].get('sessions', [])
-                    updated_client_data = {**all_data['counselor_data']['clients'][client_index], **updated_client}
+                client_index_to_update = next((i for i, client in enumerate(all_data['counselor_data']['clients']) if client.get('id') == updated_client.get('id')), -1)
+                if client_index_to_update != -1:
+                    existing_sessions = all_data['counselor_data']['clients'][client_index_to_update].get('sessions', [])
+                    updated_client_data = {**all_data['counselor_data']['clients'][client_index_to_update], **updated_client}
                     updated_client_data['sessions'] = existing_sessions
-                    all_data['counselor_data']['clients'][client_index] = updated_client_data
+                    all_data['counselor_data']['clients'][client_index_to_update] = updated_client_data
 
     if 'appointments' in new_data:
         all_data['counselor_data']['appointments'] = new_data.get('appointments', [])
@@ -365,7 +362,6 @@ def assign_client_to_counselor():
 
     all_data = read_data()
     
-    # 优化点 3: 验证添加口令
     client_to_assign = next((c for c in all_data['counselor_data']['clients'] if c.get('id') == client_id), None)
     if not client_to_assign:
         return jsonify({"message": "来访者不存在"}), 404
@@ -389,24 +385,37 @@ def assign_client_to_counselor():
 # --- 来访者数据API ---
 @app.route('/api/data/all', methods=['GET'])
 def get_all_data_for_client():
-    """为来访者提供所有数据，以便前端进行筛选。"""
     all_data = read_data()
-    # 为保护隐私，不将来访者的绑定码发送给其他来访者
     clients_data = all_data.get('counselor_data', {}).get('clients', [])
+    # 出于安全考虑，从这个公共端点移除所有人的绑定码
+    safe_clients = []
     for client in clients_data:
-        if 'binding_code' in client:
-            del client['binding_code']
+        client_copy = client.copy()
+        if 'binding_code' in client_copy:
+            del client_copy['binding_code']
+        safe_clients.append(client_copy)
             
     client_safe_data = {
-        "clients": clients_data,
+        "clients": safe_clients,
         "counselors": all_data.get('counselor_data', {}).get('counselors', []),
         "appointments": all_data.get('counselor_data', {}).get('appointments', [])
     }
     return jsonify(client_safe_data)
 
+# 优化点2: 新增API，让登录的来访者能获取自己完整的个人信息（包括绑定码）
+@app.route('/api/client/me/<username>', methods=['GET'])
+def get_client_self_data(username):
+    all_data = read_data()
+    client_profile = next((c for c in all_data.get('counselor_data', {}).get('clients', []) if c.get('username') == username), None)
+    
+    if not client_profile:
+        return jsonify({"message": "来访者不存在"}), 404
+    
+    return jsonify(client_profile)
+
+
 @app.route('/api/data/client/<username>', methods=['POST'])
 def save_client_data(username):
-    """来访者保存自己的档案信息。"""
     updated_profile = request.get_json()
     all_data = read_data()
     
@@ -414,14 +423,21 @@ def save_client_data(username):
     if client_index == -1:
         return jsonify({"message": "来访者不存在"}), 404
 
-    # 只能更新自己的档案，保留sessions和binding_code等核心数据
-    sessions = all_data['counselor_data']['clients'][client_index].get('sessions', [])
-    binding_code = all_data['counselor_data']['clients'][client_index].get('binding_code')
-    updated_profile['sessions'] = sessions
-    updated_profile['binding_code'] = binding_code
-    
-    all_data['counselor_data']['clients'][client_index] = updated_profile
+    # 保留核心数据不被覆盖
+    original_client = all_data['counselor_data']['clients'][client_index]
+    sessions = original_client.get('sessions', [])
+    binding_code = original_client.get('binding_code')
+    join_date = original_client.get('joinDate')
 
+    # 将更新与原始数据合并
+    all_data['counselor_data']['clients'][client_index] = {
+        **original_client, 
+        **updated_profile,
+        'sessions': sessions,
+        'binding_code': binding_code,
+        'joinDate': join_date
+    }
+    
     write_data(all_data)
     return jsonify({"message": "您的信息已更新"}), 200
 
