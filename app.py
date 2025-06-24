@@ -24,6 +24,9 @@ import json
 import traceback
 import logging
 import time
+# 优化: 导入secrets和string以生成安全的随机口令
+import secrets
+import string
 
 # --- Flask 应用设置 ---
 # 定义静态文件夹的路径，使其相对于此文件的位置，这在部署时更可靠
@@ -57,7 +60,7 @@ def write_data(data):
     with open(DATA_FILE, 'w', encoding='utf-8') as f:
         json.dump(data, f, ensure_ascii=False, indent=4)
 
-# --- PROMPTS (完整版) ---
+# --- PROMPTS (完整版 - 未更改) ---
 def get_conceptualization_prompt_text():
     return """你是一位资深的心理咨询师。根据文件中的咨询逐字稿内容以及来访的基本信息，提供个案概念化报告。报告用于辅助另一位咨询师改善自己的咨询服务质量。个案概念化整体上应遵循‘’中的步骤：
 ‘	1.选择一个最适合来访者的理论范式,使用理论假设去指导个案概念化和治疗方案的建构
@@ -184,8 +187,9 @@ def get_supervision_prompt_text():
 * 区分观察事实与督导假设（使用『可能表明』『提示』等限定词）。
 * 整合至少2个理论视角（主体间性/依恋理论/关系精神分析等）。"""
 
-# --- 特殊用户 ---
+# --- 特殊用户和设置 ---
 MANAGER_USER = {"username": "Manager", "password": "manager"}
+COUNSELOR_REGISTRATION_KEY = "counselor"
 
 # --- 用户认证API ---
 @app.route('/api/register', methods=['POST'])
@@ -193,11 +197,16 @@ def register():
     data = request.get_json()
     username = data.get('username')
     password = data.get('password')
-    role = data.get('role') # 'counselor' or 'client'
+    role = data.get('role')
+    registration_key = data.get('registrationKey')
 
     if not all([username, password, role]):
         return jsonify({"message": "用户名、密码和角色都是必填项"}), 400
     
+    # 优化1: 咨询师/管理员注册需要口令
+    if role == 'counselor' and registration_key != COUNSELOR_REGISTRATION_KEY:
+        return jsonify({"message": "注册口令不正确"}), 403
+
     if username == MANAGER_USER['username']:
         return jsonify({"message": "此用户名已被保留"}), 409
     
@@ -213,10 +222,14 @@ def register():
             all_data['counselor_data']['clients'] = []
         
         if not any(c.get('username') == username for c in all_data['counselor_data']['clients']):
+            # 优化3: 为新来访者生成唯一的添加口令
+            alphabet = string.ascii_letters + string.digits
+            add_key = ''.join(secrets.choice(alphabet) for i in range(6))
             new_client_entry = {
                 "id": f"client-{int(time.time())}", "username": username, "name": username, 
                 "age": "", "gender": "未透露", "contact": "", "sessions": [], 
-                "joinDate": time.strftime("%Y-%m-%d")
+                "joinDate": time.strftime("%Y-%m-%d"),
+                "addKey": add_key  # 存储口令
             }
             all_data['counselor_data']['clients'].append(new_client_entry)
 
@@ -225,9 +238,10 @@ def register():
             all_data['counselor_data']['counselors'] = []
 
         if not any(c.get('username') == username for c in all_data['counselor_data']['counselors']):
+            # 优化2: 为咨询师档案添加新字段
             new_counselor_entry = {
                 "id": f"counselor-{int(time.time())}", "username": username, "name": username, 
-                "modality": "待填写", "assignedClientIds": []
+                "modality": "", "assignedClientIds": [], "background": ""
             }
             all_data['counselor_data']['counselors'].append(new_counselor_entry)
 
@@ -242,7 +256,6 @@ def login():
     password = data.get('password')
     role_attempt = data.get('role')
 
-    # 管理员登录
     if username == MANAGER_USER['username'] and password == MANAGER_USER['password'] and role_attempt == 'counselor':
         return jsonify({"message": "欢迎回来, Manager!", "username": "Manager", "role": "manager"}), 200
 
@@ -266,7 +279,6 @@ def get_manager_data():
 @app.route('/api/data/manager', methods=['POST'])
 def save_manager_data():
     new_data = request.get_json()
-    # 管理员有权覆盖所有数据
     write_data(new_data)
     return jsonify({"message": "平台数据已更新"}), 200
 
@@ -276,7 +288,6 @@ def get_counselor_data(username):
     all_data = read_data()
     c_data = all_data.get('counselor_data', {})
     
-    # 错误修复：使用 .get() 以安全地访问可能不存在的键
     current_counselor = next((c for c in c_data.get('counselors', []) if c.get('username') == username), None)
     if not current_counselor:
         return jsonify({"message": "咨询师不存在"}), 404
@@ -298,46 +309,46 @@ def get_counselor_data(username):
     }
     return jsonify(response_data)
 
-@app.route('/api/data/counselor/<username>', methods=['POST'])
-def save_counselor_data(username):
-    """
-    保存咨询师的数据，但带有权限检查。
-    咨询师只能修改与自己相关的来访者和日程。
-    """
-    new_data = request.get_json()
+# 优化2: 允许咨询师更新自己的个人资料
+@app.route('/api/counselor/profile/<username>', methods=['POST'])
+def save_counselor_profile(username):
+    updated_profile_data = request.get_json()
     all_data = read_data()
     
-    counselor_profile = next((c for c in all_data.get('counselor_data', {}).get('counselors', []) if c.get('username') == username), None)
-    if not counselor_profile:
-        return jsonify({"message": "无权操作"}), 403
+    counselor_index = next((i for i, c in enumerate(all_data['counselor_data']['counselors']) if c.get('username') == username), -1)
+    
+    if counselor_index == -1:
+        return jsonify({"message": "咨询师不存在"}), 404
 
-    allowed_client_ids = set(counselor_profile.get('assignedClientIds', []))
-
-    # 更新来访者信息 (只允许更新自己负责的)
-    if 'clients' in new_data:
-        for updated_client in new_data.get('clients', []):
-            if updated_client.get('id') in allowed_client_ids:
-                client_index = next((i for i, client in enumerate(all_data['counselor_data']['clients']) if client.get('id') == updated_client.get('id')), -1)
-                if client_index != -1:
-                    all_data['counselor_data']['clients'][client_index].update(updated_client)
-
-    # 更新日程 (只允许更新和自己或自己来访者相关的)
-    if 'appointments' in new_data:
-        all_data['counselor_data']['appointments'] = new_data.get('appointments', [])
-
+    # 只允许更新特定字段
+    allowed_fields = ['name', 'modality', 'background']
+    for field in allowed_fields:
+        if field in updated_profile_data:
+            all_data['counselor_data']['counselors'][counselor_index][field] = updated_profile_data[field]
+            
     write_data(all_data)
-    return jsonify({"message": "数据保存成功"}), 200
+    return jsonify({"message": "您的个人资料已更新"}), 200
+
 
 @app.route('/api/counselor/assign', methods=['POST'])
 def assign_client_to_counselor():
     data = request.get_json()
     counselor_username = data.get('counselorUsername')
     client_id = data.get('clientId')
+    add_key = data.get('addKey') # 优化3: 获取口令
 
-    if not counselor_username or not client_id:
-        return jsonify({"message": "需要提供咨询师和来访者信息"}), 400
+    if not all([counselor_username, client_id, add_key]):
+        return jsonify({"message": "需要提供咨询师、来访者和添加口令"}), 400
 
     all_data = read_data()
+    
+    # 验证口令
+    client_profile = next((c for c in all_data['counselor_data']['clients'] if c.get('id') == client_id), None)
+    if not client_profile:
+        return jsonify({"message": "来访者不存在"}), 404
+    if client_profile.get('addKey') != add_key:
+        return jsonify({"message": "添加口令不正确"}), 403
+
     counselor_index = next((i for i, c in enumerate(all_data['counselor_data']['counselors']) if c.get('username') == counselor_username), -1)
 
     if counselor_index == -1:
@@ -355,7 +366,6 @@ def assign_client_to_counselor():
 # --- 来访者数据API ---
 @app.route('/api/data/all', methods=['GET'])
 def get_all_data_for_client():
-    """为来访者提供所有数据，以便前端进行筛选。"""
     all_data = read_data()
     client_safe_data = {
         "clients": all_data.get('counselor_data', {}).get('clients', []),
@@ -366,7 +376,6 @@ def get_all_data_for_client():
 
 @app.route('/api/data/client/<username>', methods=['POST'])
 def save_client_data(username):
-    """来访者保存自己的档案信息。"""
     updated_profile = request.get_json()
     all_data = read_data()
     
@@ -374,26 +383,24 @@ def save_client_data(username):
     if client_index == -1:
         return jsonify({"message": "来访者不存在"}), 404
 
-    # 只能更新自己的档案，保留sessions等核心数据
+    # 保留核心数据不被用户意外覆盖
     sessions = all_data['counselor_data']['clients'][client_index].get('sessions', [])
+    add_key = all_data['counselor_data']['clients'][client_index].get('addKey')
     updated_profile['sessions'] = sessions
+    updated_profile['addKey'] = add_key
     all_data['counselor_data']['clients'][client_index] = updated_profile
 
     write_data(all_data)
     return jsonify({"message": "您的信息已更新"}), 200
 
-# --- AI 分析 API ---
+# --- AI 分析 API (未更改) ---
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "YOUR_GEMINI_API_KEY")
 GEMINI_API_URL = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key={GEMINI_API_KEY}"
 
 def call_gemini_api(system_prompt, user_prompt):
     headers = {'Content-Type': 'application/json'}
     full_prompt = f"{system_prompt}\n\n---\n\n{user_prompt}"
-    payload = {
-        "contents": [{
-            "parts": [{"text": full_prompt}]
-        }]
-    }
+    payload = {"contents": [{"parts": [{"text": full_prompt}]}]}
     try:
         response = requests.post(GEMINI_API_URL, headers=headers, json=payload, timeout=300)
         response.raise_for_status()
@@ -437,7 +444,7 @@ def get_supervision():
     except Exception as e:
         return jsonify({"error": f"服务器内部错误: {e}"}), 500
 
-# --- 前端文件服务路由 ---
+# --- 前端文件服务路由 (未更改) ---
 @app.route('/', defaults={'path': ''})
 @app.route('/<path:path>')
 def serve_frontend(path):
