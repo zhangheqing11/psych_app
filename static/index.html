@@ -409,6 +409,7 @@
                                 clients={counselor_data.clients} 
                                 counselors={counselor_data.counselors} 
                                 onUpdateAppointments={handleUpdateAppointments} 
+                                // BUG FIX: Do not pass currentUser from manager view
                             />;
                 default: return <div/>;
             }
@@ -1085,8 +1086,11 @@
         const { useState, useMemo } = React;
         const [currentDate, setCurrentDate] = useState(new Date());
         
+        // BUG FIX: Handle optional currentUser for manager view.
+        const isManagerView = !currentUser;
         const currentCounselorId = useMemo(() => {
-            return (counselors || []).find(c => c.username === currentUser.username)?.id;
+            // Use optional chaining `?.` to prevent crash if currentUser is undefined.
+            return (counselors || []).find(c => c.username === currentUser?.username)?.id;
         }, [counselors, currentUser]);
 
         const changeDay = (offset) => {
@@ -1125,15 +1129,25 @@
                           <div className="time-slot">
                             {hourAppointments.length > 0 ? (
                                 hourAppointments.map(appointment => {
-                                    // 优化点 1: 匿名化非当前咨询师的来访者姓名
                                     const isOwnAppointment = appointment.counselorId === currentCounselorId;
-                                    const clientName = isOwnAppointment 
+                                    
+                                    // Manager sees all names. Counselor sees own names, but others are anonymized.
+                                    const clientName = isManagerView || isOwnAppointment 
                                         ? (clients || []).find(c => c.id === appointment.clientId)?.name || '未知来访'
                                         : '来访者';
+                                    
+                                    const appointmentBgClass = isManagerView || isOwnAppointment 
+                                        ? 'bg-blue-100 border-blue-500' 
+                                        : 'bg-gray-100 border-gray-400';
+                                    
+                                    const appointmentTextColorClass = isManagerView || isOwnAppointment
+                                        ? 'text-blue-800'
+                                        : 'text-gray-700';
+
 
                                     return (
-                                        <div key={appointment.id} className={`${isOwnAppointment ? 'bg-blue-100 border-blue-500' : 'bg-gray-100 border-gray-400'} border-l-4 p-2 rounded-r-lg cursor-pointer hover:opacity-80`} onClick={() => onSelectAppointment(appointment)}>
-                                            <p className={`font-bold text-sm ${isOwnAppointment ? 'text-blue-800' : 'text-gray-700'}`}>{clientName}</p>
+                                        <div key={appointment.id} className={`${appointmentBgClass} border-l-4 p-2 rounded-r-lg cursor-pointer hover:opacity-80`} onClick={() => onSelectAppointment(appointment)}>
+                                            <p className={`font-bold text-sm ${appointmentTextColorClass}`}>{clientName}</p>
                                             <p className="text-xs text-gray-600">咨询师: {(counselors || []).find(c => c.id === appointment.counselorId)?.name || '未知咨询师'}</p>
                                             {appointment.location && <p className="text-xs text-gray-600">地点: {appointment.location}</p>}
                                             {appointment.notes && <p className="text-xs text-gray-500 mt-1 italic">"{appointment.notes}"</p>}
@@ -1308,9 +1322,9 @@
     };
 
     const AssignClientModal = ({ unassignedClients, onCancel, currentUser, showAlert, fetchData }) => {
-        // BUG FIX: Add a stronger guard to prevent rendering if the crucial prop is missing.
+        // BUG FIX: Add a definitive guard. If the prop is not an array, do not render anything.
+        // This is the most robust way to prevent the "blank page" crash.
         if (!Array.isArray(unassignedClients)) {
-            // This prevents the crash by rendering nothing if the array isn't ready.
             return null;
         }
 
@@ -1869,4 +1883,4 @@
     ReactDOM.createRoot(document.getElementById('root')).render(<App />);
   </script>
 </body>
-                  </html>
+                       </html>
