@@ -1429,7 +1429,7 @@
 
                 <div className="flex justify-between items-center mb-6 pb-4 border-b">
                     <h2 className="text-2xl font-semibold text-gray-700 flex items-center"><span className="mr-3 text-2xl">👥</span>{title}</h2>
-                    {isManagerView &&
+                    {!isManagerView &&
                         <button onClick={handleButtonClick} className="bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2 px-4 rounded-lg flex items-center shadow-sm">
                             <span className="mr-2">➕</span>{buttonText}
                         </button>
@@ -1438,7 +1438,7 @@
                 <input type="text" placeholder="搜索来访者姓名..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="w-full p-3 mb-4 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"/>
                 {filteredClients.length > 0 ? (
                     <ul className="space-y-3">{filteredClients.map(client => (<li key={client.id} onClick={() => onSelectClient(client)} className="bg-gray-50 hover:bg-blue-50 border rounded-lg p-4 cursor-pointer flex justify-between items-center transition-all duration-200 hover:shadow-md"><div><p className="text-lg font-medium text-blue-700">{client.name} <span className="text-sm text-gray-500">({client.gender}, {client.age}岁)</span></p><p className="text-sm text-gray-600">加入日期: {client.joinDate}</p></div><span className="text-gray-400 font-bold">❯</span></li>))}</ul>
-                ) : <p className="text-center text-gray-500 py-8">暂无匹配的来访者。{isManagerView && '点击“添加新来访”开始。'}</p>}
+                ) : <p className="text-center text-gray-500 py-8">暂无匹配的来访者。{!isManagerView && '点击“负责新来访”开始。'}</p>}
             </div>
         );
     };
