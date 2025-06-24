@@ -59,7 +59,7 @@ def write_data(data):
     with open(DATA_FILE, 'w', encoding='utf-8') as f:
         json.dump(data, f, ensure_ascii=False, indent=4)
 
-# --- PROMPTS (此部分为AI功能，与核心业务逻辑无关，保持不变) ---
+# --- PROMPTS (完整版) ---
 def get_conceptualization_prompt_text():
     return """你是一位资深的心理咨询师。根据文件中的咨询逐字稿内容以及来访的基本信息，提供个案概念化报告。报告用于辅助另一位咨询师改善自己的咨询服务质量。个案概念化整体上应遵循‘’中的步骤：
 ‘	1.选择一个最适合来访者的理论范式,使用理论假设去指导个案概念化和治疗方案的建构
@@ -115,7 +115,7 @@ def get_assessment_prompt_text():
 	自我身份认同：对自己的定义（认为自己是谁）、价值观、能力与局限性。在青少年时期逐渐稳定
 	自我评价：反映个人能力在主观和客观的相符程度，也包括对自我理想意象的幻想（即理想的自我是什么样的）。思想和行动符合，我们的内在理想就会感到自我实现和自豪；否则就会产生内疚、失败和一无所有处的感觉。
 	1.2自尊管理：从打击中恢复原状的能力。
-	包括自尊の脆弱性（水平高低、稳定性）、应对挫败自尊的方式（自恋自大或自我挫败/受虐，而更健康的方式是直面问题 而不是困在自我中）、利用他人调节自尊。自尊是对自己的尊敬和或欣赏，自尊问题使我们变得无法承受情感和焦虑，无法现实评价能力和局限，无法控制我们的冲动，无法放松，等等。
+	包括自尊の脆弱性（水平高低、稳定性）、应对挫败自尊的方式（自恋自大或自我挫败/受虐，而更健康的方式是直面问题 而不是困在自我中）、利用他人调节自尊。自尊是对自己的尊敬和或欣赏，自尊问题使我们变得无法承受情感和焦虑，无法现实评价能力和局-限，无法控制我们的冲动，无法放松，等等。
 	此外，自我评价的问题也会导致自我知觉的扭曲和自尊管理的困难。有的人会高估自己的能力(夸大)，而有的人会低估自己的能力（抑郁），又或者理想化他人。（嫉妒具有攻击性，而羡慕具有靠近的倾向）
 	2.人际关系功能：保持稳定、信任、亲密关系的能力
 	关键：1.关系中对自己和对方的信任感、2.感知度：既好又坏的立体性、独特个性的独立性（明白他人的思想和感受与自己不同，心智化能力）、过去到现在与未来可能变化的完整性。3.安全感：抵抗面对分离、分歧、消极情绪。4.亲密性（边界情况）；5.相互依存度：合适的依存是既给予也享受的。
@@ -215,6 +215,7 @@ def register():
     all_data['users'][username] = {"password": password, "role": role}
     response_data = {"message": "注册成功！", "username": username, "role": role}
 
+    # 根据角色创建档案
     if role == 'client':
         if 'clients' not in all_data['counselor_data']:
             all_data['counselor_data']['clients'] = []
@@ -241,7 +242,7 @@ def register():
                 "id": f"counselor-{int(time.time())}", "username": username, "name": username, 
                 "modality": "待填写", 
                 "clinicalBackground": "",
-                "contactInfo": "",
+                "contactInfo": "", # 优化点3: 添加联系方式字段
                 "assignedClientIds": []
             }
             all_data['counselor_data']['counselors'].append(new_counselor_entry)
@@ -257,6 +258,7 @@ def login():
     password = data.get('password')
     role_attempt = data.get('role')
 
+    # 管理员登录
     if username == MANAGER_USER['username'] and password == MANAGER_USER['password'] and role_attempt == 'counselor':
         return jsonify({"message": "欢迎回来, Manager!", "username": "Manager", "role": "manager"}), 200
 
@@ -326,7 +328,7 @@ def save_counselor_data(username):
         counselor_profile['name'] = profile_updates.get('name', counselor_profile['name'])
         counselor_profile['modality'] = profile_updates.get('modality', counselor_profile['modality'])
         counselor_profile['clinicalBackground'] = profile_updates.get('clinicalBackground', counselor_profile.get('clinicalBackground', ''))
-        counselor_profile['contactInfo'] = profile_updates.get('contactInfo', counselor_profile.get('contactInfo', ''))
+        counselor_profile['contactInfo'] = profile_updates.get('contactInfo', counselor_profile.get('contactInfo', '')) # 优化点3: 保存联系方式
         all_data['counselor_data']['counselors'][counselor_index] = counselor_profile
     
     allowed_client_ids = set(counselor_profile.get('assignedClientIds', []))
@@ -359,20 +361,15 @@ def assign_client_to_counselor():
         return jsonify({"message": "需要提供咨询师、来访者和添加口令"}), 400
 
     all_data = read_data()
-    c_data = all_data.get('counselor_data', {})
     
-    for counselor in c_data.get('counselors', []):
-        if client_id in counselor.get('assignedClientIds', []):
-            return jsonify({"message": "此来访者已被其他咨询师负责，无法重复添加"}), 409
-
-    client_to_assign = next((c for c in c_data.get('clients', []) if c.get('id') == client_id), None)
+    client_to_assign = next((c for c in all_data['counselor_data']['clients'] if c.get('id') == client_id), None)
     if not client_to_assign:
         return jsonify({"message": "来访者不存在"}), 404
         
     if client_to_assign.get('binding_code') != binding_code:
         return jsonify({"message": "添加口令不正确"}), 403
 
-    counselor_index = next((i for i, c in enumerate(c_data.get('counselors', [])) if c.get('username') == counselor_username), -1)
+    counselor_index = next((i for i, c in enumerate(all_data['counselor_data']['counselors']) if c.get('username') == counselor_username), -1)
     if counselor_index == -1:
         return jsonify({"message": "咨询师不存在"}), 404
         
@@ -390,6 +387,7 @@ def assign_client_to_counselor():
 def get_all_data_for_client():
     all_data = read_data()
     clients_data = all_data.get('counselor_data', {}).get('clients', [])
+    # 出于安全考虑，从这个公共端点移除所有人的绑定码
     safe_clients = []
     for client in clients_data:
         client_copy = client.copy()
@@ -404,6 +402,7 @@ def get_all_data_for_client():
     }
     return jsonify(client_safe_data)
 
+# 优化点2: 新增API，让登录的来访者能获取自己完整的个人信息（包括绑定码）
 @app.route('/api/client/me/<username>', methods=['GET'])
 def get_client_self_data(username):
     all_data = read_data()
@@ -424,11 +423,13 @@ def save_client_data(username):
     if client_index == -1:
         return jsonify({"message": "来访者不存在"}), 404
 
+    # 保留核心数据不被覆盖
     original_client = all_data['counselor_data']['clients'][client_index]
     sessions = original_client.get('sessions', [])
     binding_code = original_client.get('binding_code')
     join_date = original_client.get('joinDate')
 
+    # 将更新与原始数据合并
     all_data['counselor_data']['clients'][client_index] = {
         **original_client, 
         **updated_profile,
