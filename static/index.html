@@ -233,16 +233,18 @@
         const [password, setPassword] = useState('');
         const [confirmPassword, setConfirmPassword] = useState('');
         const [role, setRole] = useState('counselor');
-        const [secretCode, setSecretCode] = useState(''); // Optimization 1: State for secret code
+        const [secretCode, setSecretCode] = useState('');
 
         const handleSubmit = async (e) => {
             e.preventDefault();
-            if (!username || !password) { showAlert('请输入用户名和密码。'); return; }
+            
+            // [OPTIMIZATION 1] Modify validation for client login
+            if (!username) { showAlert('请输入用户名。'); return; }
+            if (!(mode === 'login' && role === 'client') && !password) { showAlert('请输入密码。'); return; }
 
             if (mode === 'register') {
               if (password.length < 6) { showAlert('密码必须至少为6个字符。'); return; }
               if (password !== confirmPassword) { showAlert('两次输入的密码不匹配！'); return; }
-              // Optimization 1: Check for secret code on counselor registration
               if (role === 'counselor' && !secretCode) { showAlert('请输入咨询师/管理注册口令。'); return; }
               await onRegister(username, password, role, secretCode);
             } else {
@@ -264,11 +266,15 @@
 
                     <form onSubmit={handleSubmit} className="space-y-4">
                         <div><label className="text-sm font-medium text-gray-700">用户名</label><input type="text" value={username} onChange={e => setUsername(e.target.value)} className="w-full p-2 mt-1 border rounded-md" required /></div>
-                        <div><label className="text-sm font-medium text-gray-700">密码</label><input type="password" value={password} onChange={e => setPassword(e.target.value)} className="w-full p-2 mt-1 border rounded-md" required /></div>
+                        
+                        {/* [OPTIMIZATION 1] Hide password field for client login */}
+                        {!(mode === 'login' && role === 'client') && (
+                          <div><label className="text-sm font-medium text-gray-700">密码</label><input type="password" value={password} onChange={e => setPassword(e.target.value)} className="w-full p-2 mt-1 border rounded-md" required /></div>
+                        )}
+
                         {mode === 'register' && (
                           <>
                             <div><label className="text-sm font-medium text-gray-700">确认密码</label><input type="password" value={confirmPassword} onChange={e => setConfirmPassword(e.target.value)} className="w-full p-2 mt-1 border rounded-md" required/></div>
-                            {/* Optimization 1: Added secret code input for counselor registration */}
                             {role === 'counselor' && (
                               <div><label className="text-sm font-medium text-gray-700">注册口令</label><input type="password" value={secretCode} onChange={e => setSecretCode(e.target.value)} placeholder="咨询师/管理员需要口令" className="w-full p-2 mt-1 border rounded-md" required/></div>
                             )}
@@ -451,11 +457,10 @@
     // =================================== CLIENT PORTAL START ========================================
     // ================================================================================================
     const ClientPortal = ({ user, allData, onLogout, onSave, showAlert }) => {
+        // [OPTIMIZATION 3] Remove editing state, as clients no longer edit their profiles.
         const { useState, useMemo, useEffect, useCallback } = React;
-        const [isEditing, setIsEditing] = useState(false);
         const [clientProfile, setClientProfile] = useState(null);
 
-        // Fetch self data to get sensitive info like binding_code
         useEffect(() => {
             const fetchSelfData = async () => {
                 try {
@@ -486,16 +491,12 @@
             return { totalHours: total, monthlyHours: monthly };
         }, [clientAppointments]);
         
-        const handleSaveProfile = (updatedProfile) => {
-            onSave(updatedProfile, true); // true indicates it's a client profile update
-            setClientProfile(updatedProfile);
-            setIsEditing(false);
-            showAlert("您的信息已成功更新！");
-        };
-
         if (!clientProfile || !allData) {
             return <div className="min-h-screen flex items-center justify-center">正在加载您的信息...</div>;
         }
+
+        // [OPTIMIZATION 3] Image data for the QR code
+        const wechatQrCodeBase64 = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAoHBwgHBgoICAgLCgoLDhgQDg0NDh0VFhEYIx8lJCIfIiEmKzcvJik0KSEiMEExNDk7Pj4+JS5ESUM8SDc9Pjv/2wBDAQoLCw4NDhwQEBw7KCIoOzs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozv/wAARCAAoACgDASIAAhEBAxEB/8QAGQABAQEBAQEAAAAAAAAAAAAAAAcGBQQI/8QAKRAAAQMDAgQGAwAAAAAAAAAAAQIDBAAFEQYHEhMhMUEUFRYiI0Jhcf/EABcBAQEBAQAAAAAAAAAAAAAAAAQBAgP/xAAaEQEBAQEBAQEAAAAAAAAAAAAAAQIDETFB/9oADAMBAAIRAxEAPwDqOkA+V8c+g/c0y0gH6vjB9B+5oDOlKUBEhISok4AFNKUoCn0gH61xY9B+5plpAP1nFv0H7mgM6UpQFSX5cSK2HJT7bKCcBS1BIz7mqtZ3GNGbLsl5tlA6qWoJA/mg89KUrKUpSgKUpSgKUpSgKUpSgKUpSgKUpSgKUpSgKUpSgKUpSgKkYlR5SVqYeQ4ELKFbVBWFDqD7io+pGJUeUlSmHkOBCyitqCthHUH3FAY0pSgP//Z";
 
         return (
             <div className="min-h-screen bg-gray-50 flex flex-col">
@@ -511,84 +512,74 @@
                 </div>
               </header>
               <main className="flex-grow container mx-auto p-4 sm:p-6 lg:p-8 space-y-8">
-                {isEditing ? (
-                    <ClientForm 
-                        clientToEdit={clientProfile}
-                        onSave={handleSaveProfile}
-                        onCancel={() => setIsEditing(false)}
-                        allClients={allData.clients}
-                        isManagerView={false}
-                    />
-                ) : (
-                    <>
-                    <div className="bg-white p-6 rounded-lg shadow-md">
-                        <div className="flex justify-between items-center mb-4 border-b pb-3">
-                            <h2 className="text-xl font-semibold text-gray-700">我的信息</h2>
-                            <button onClick={() => setIsEditing(true)} className="text-sm font-medium text-blue-600 hover:underline">编辑</button>
+                
+                {/* [OPTIMIZATION 3] Redesigned information section */}
+                <div className="bg-white p-6 rounded-lg shadow-md animate-fadeIn">
+                    <div className="flex flex-col sm:flex-row items-center gap-8">
+                        {/* Image Column */}
+                        <div className="flex-shrink-0 text-center">
+                            <img src={wechatQrCodeBase64} alt="客服微信" className="w-36 h-36 object-cover rounded-lg shadow-sm mx-auto"/>
+                            <p className="text-center text-sm font-semibold mt-2 text-gray-700">扫码联系客服</p>
                         </div>
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm">
-                           <p><strong>姓名:</strong> {clientProfile.name}</p>
-                           <p><strong>年龄:</strong> {clientProfile.age}</p>
-                           <p><strong>性别:</strong> {clientProfile.gender}</p>
-                           <p><strong>联系方式:</strong> {clientProfile.contact}</p>
-                           <p className="sm:col-span-2"><strong>职业/年级:</strong> {clientProfile.grade || '未提供'}</p>
-                           <p><strong>性取向:</strong> {clientProfile.sexualOrientation || '未提供'}</p>
-                           <p><strong>心理状态评分:</strong> {clientProfile.mentalStateScore}/10</p>
-                           <p className="sm:col-span-2"><strong>既往病史:</strong> {clientProfile.historyOfIllness || '未提供'}</p>
-                           <p className="sm:col-span-2"><strong>残障情况:</strong> {clientProfile.disabilityStatus || '未提供'}</p>
-                           <p><strong>宗教信仰:</strong> {clientProfile.religiousBelief || '未提供'}</p>
-                           <p><strong>种族认同:</strong> {clientProfile.ethnicIdentity || '未提供'}</p>
-                           <p><strong>个人经济:</strong> {clientProfile.personalFinance || '未提供'}</p>
-                           <p><strong>家庭经济:</strong> {clientProfile.familyFinance || '未提供'}</p>
-                        </div>
-                        <div className="mt-4 border-t pt-4">
-                            <h3 className="font-semibold text-gray-700">咨询师添加口令</h3>
-                            <p className="text-xs text-gray-500 mt-1">请将此口令提供给您的咨询师，以便他们将您添加到他们的档案中。请勿泄露给他人。</p>
-                            <div className="mt-2 bg-blue-50 text-blue-800 font-mono text-lg tracking-widest p-3 rounded-md text-center">
-                                {clientProfile.binding_code}
+
+                        {/* Info Column */}
+                        <div className="flex-grow w-full border-t sm:border-t-0 sm:border-l border-gray-200 pt-6 sm:pt-0 sm:pl-8">
+                            <h2 className="text-2xl font-bold text-gray-800 mb-6">欢迎, {user.username}</h2>
+                            
+                            <div className="mb-6">
+                                <h3 className="font-semibold text-gray-700">咨询师添加口令</h3>
+                                <p className="text-xs text-gray-500 mt-1">请将此口令提供给您的咨询师，以便他们将您添加到他们的档案中。请勿泄露给他人。</p>
+                                <div className="mt-2 bg-blue-50 text-blue-800 font-mono text-lg tracking-widest p-3 rounded-md text-center">
+                                    {clientProfile.binding_code}
+                                </div>
+                            </div>
+
+                            <div>
+                                <h3 className="font-semibold text-gray-700">联系信息</h3>
+                                <p className="text-sm text-gray-600 mt-1">如遇问题，请添加客服微信：<span className="font-semibold text-gray-800">JieHuaJiJiu_</span></p>
                             </div>
                         </div>
                     </div>
+                </div>
 
-                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-                        <div className="bg-white p-6 rounded-lg shadow-md">
-                           <h2 className="text-xl font-semibold text-gray-700 mb-4 border-b pb-3">我的咨询师</h2>
-                            {assignedCounselor ? (
-                                <div>
-                                   <h3 className="text-lg font-bold text-blue-700">{assignedCounselor.name}</h3>
-                                   <p className="text-sm text-gray-600 mt-1">{assignedCounselor.modality}</p>
-                                   {assignedCounselor.contactInfo && <p className="text-xs text-gray-500 mt-1">联系方式: {assignedCounselor.contactInfo}</p>}
-                                </div>
-                            ) : <p className="text-gray-500">您目前未分配咨询师。</p>}
-                        </div>
-
-                         <div className="bg-white p-6 rounded-lg shadow-md">
-                           <h2 className="text-xl font-semibold text-gray-700 mb-4 border-b pb-3">咨询统计</h2>
-                           <div className="space-y-3">
-                                <p><strong>总咨询时长:</strong> {totalHours} 小时</p>
-                                <p><strong>近一个月咨询时长:</strong> {monthlyHours} 小时</p>
-                           </div>
-                        </div>
-                    </div>
-
+                {/* Other sections remain unchanged */}
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
                     <div className="bg-white p-6 rounded-lg shadow-md">
-                        <h2 className="text-xl font-semibold text-gray-700 mb-4 border-b pb-3">我的日历</h2>
-                        <div className="space-y-3">
-                            {clientAppointments.length > 0 ? (
-                                clientAppointments.sort((a, b) => new Date(a.date) - new Date(b.date)).map(appt => (
-                                    <div key={appt.id} className="bg-blue-50 border-l-4 border-blue-500 p-3 rounded-r-lg">
-                                        <p className="font-bold text-blue-800">{appt.date} - {appt.time}</p>
-                                        <p className="text-sm text-gray-600">与 {allData.counselors.find(c => c.id === appt.counselorId)?.name || '咨询师'} 的咨询</p>
-                                        {appt.location && <p className="text-xs text-gray-500">地点: {appt.location}</p>}
-                                    </div>
-                                ))
-                            ) : (
-                                <p className="text-gray-500 text-center py-4">您目前没有已安排的咨询。</p>
-                            )}
-                        </div>
+                       <h2 className="text-xl font-semibold text-gray-700 mb-4 border-b pb-3">我的咨询师</h2>
+                        {assignedCounselor ? (
+                            <div>
+                               <h3 className="text-lg font-bold text-blue-700">{assignedCounselor.name}</h3>
+                               <p className="text-sm text-gray-600 mt-1">{assignedCounselor.modality}</p>
+                               {assignedCounselor.contactInfo && <p className="text-xs text-gray-500 mt-1">联系方式: {assignedCounselor.contactInfo}</p>}
+                            </div>
+                        ) : <p className="text-gray-500">您目前未分配咨询师。</p>}
                     </div>
-                  </>
-                )}
+
+                     <div className="bg-white p-6 rounded-lg shadow-md">
+                       <h2 className="text-xl font-semibold text-gray-700 mb-4 border-b pb-3">咨询统计</h2>
+                       <div className="space-y-3">
+                            <p><strong>总咨询时长:</strong> {totalHours} 小时</p>
+                            <p><strong>近一个月咨询时长:</strong> {monthlyHours} 小时</p>
+                       </div>
+                    </div>
+                </div>
+
+                <div className="bg-white p-6 rounded-lg shadow-md">
+                    <h2 className="text-xl font-semibold text-gray-700 mb-4 border-b pb-3">我的日历</h2>
+                    <div className="space-y-3">
+                        {clientAppointments.length > 0 ? (
+                            clientAppointments.sort((a, b) => new Date(a.date) - new Date(b.date)).map(appt => (
+                                <div key={appt.id} className="bg-blue-50 border-l-4 border-blue-500 p-3 rounded-r-lg">
+                                    <p className="font-bold text-blue-800">{appt.date} - {appt.time}</p>
+                                    <p className="text-sm text-gray-600">与 {allData.counselors.find(c => c.id === appt.counselorId)?.name || '咨询师'} 的咨询</p>
+                                    {appt.location && <p className="text-xs text-gray-500">地点: {appt.location}</p>}
+                                </div>
+                            ))
+                        ) : (
+                            <p className="text-gray-500 text-center py-4">您目前没有已安排的咨询。</p>
+                        )}
+                    </div>
+                </div>
               </main>
             </div>
         );
@@ -814,6 +805,34 @@
         });
         const [assignmentModal, setAssignmentModal] = useState({ isOpen: false, client: null });
 
+        // [OPTIMIZATION 2] State and handler for creating a new client
+        const [newClientUsername, setNewClientUsername] = useState('');
+        const handleCreateClient = async () => {
+            if (!newClientUsername.trim()) {
+                showAlert('请输入要创建的来访者用户名。');
+                return;
+            }
+            try {
+                const res = await fetch('/api/counselor/create_client', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        counselorUsername: currentUser.username,
+                        newClientUsername: newClientUsername.trim()
+                    }),
+                });
+                const data = await res.json();
+                if (!res.ok) throw new Error(data.message || "创建失败");
+                
+                showAlert(data.message);
+                fetchData(); // Re-fetch data to update lists
+                setNewClientUsername(''); // Clear input
+            } catch (err) {
+                showAlert(`创建失败: ${err.message}`);
+            }
+        };
+
+
         const handleChange = (e) => {
             const { name, value } = e.target;
             setFormData(prev => ({...prev, [name]: value}));
@@ -855,7 +874,7 @@
                 showAlert(`来访者 ${clientToAssign.name} 已成功分配到您的名下！`);
                 fetchData(); // Re-fetch data to update lists
                 setAssignmentModal({ isOpen: false, client: null });
-            } catch (err) {
+            } catch (err) => {
                 showAlert(err.message);
             }
         };
@@ -879,7 +898,7 @@
                     <div><label className="block text-sm font-medium">临床和学术背景</label><textarea name="clinicalBackground" value={formData.clinicalBackground} onChange={handleChange} rows="4" className="w-full p-2 border rounded-md" placeholder="例如：XX大学临床心理学硕士，XX医院实习经验"></textarea></div>
                     
                     <div className="pt-4 border-t">
-                        <label className="block text-sm font-medium">负责新来访</label>
+                        <label className="block text-sm font-medium">负责已注册来访</label>
                         <p className="text-xs text-gray-500 mb-2">从此列表选择一个未分配的来访者，并输入其添加口令来建立关联。</p>
                         <select 
                             onChange={(e) => handleClientSelection(e.target.value)} 
@@ -892,6 +911,22 @@
                             ))}
                         </select>
                          {unassignedClients?.length === 0 && <p className="text-xs text-gray-400 text-center py-2">当前没有未分配的来访者。</p>}
+                    </div>
+
+                    {/* [OPTIMIZATION 2] New client creation UI */}
+                    <div className="pt-4 border-t">
+                        <label className="block text-sm font-medium">创建负责来访</label>
+                        <p className="text-xs text-gray-500 mb-2">为一位全新的来访者创建账户，该账户将自动分配到您的名下。</p>
+                        <div className="flex items-center gap-2">
+                            <input 
+                                type="text"
+                                placeholder="新来访者用户名"
+                                value={newClientUsername}
+                                onChange={(e) => setNewClientUsername(e.target.value)}
+                                className="flex-grow p-2 border rounded-md"
+                            />
+                            <button type="button" onClick={handleCreateClient} className="px-4 py-2 text-white bg-green-600 hover:bg-green-700 rounded-md font-semibold">创建</button>
+                        </div>
                     </div>
 
                     <div className="flex justify-end space-x-3 pt-4 border-t mt-6">
@@ -1472,7 +1507,9 @@
         e.preventDefault(); 
         if (!formData.name.trim() || !formData.age) { alert('姓名和年龄为必填项。'); return; }
         if (isManagerView && !formData.username.trim()) { alert('必须为来访者设置一个用户名。'); return; }
-        if (isManagerView && !clientToEdit && !password) { alert('为新来访者设置初始密码。'); return; }
+        
+        // [OPTIMIZATION 1] Client login doesn't need a password, so we don't require it on creation/edit either.
+        // if (isManagerView && !clientToEdit && !password) { alert('为新来访者设置初始密码。'); return; }
 
         const clientData = { ...formData, age: parseInt(formData.age), referredBy: formData.referredBy || null };
         onSave(clientData, password);
@@ -1492,7 +1529,8 @@
                 <div><label className="block text-sm font-medium">年龄 <span className="text-red-500">*</span></label><input type="number" name="age" value={formData.age} onChange={handleChange} required className="w-full p-2 border rounded-md" /></div>
                 {isManagerView && <>
                   <div><label className="block text-sm font-medium">用户名 (用于登录) <span className="text-red-500">*</span></label><input type="text" name="username" value={formData.username} onChange={handleChange} required className="w-full p-2 border rounded-md" disabled={!!clientToEdit} /></div>
-                  <div><label className="block text-sm font-medium">密码 {clientToEdit ? '(留空即不修改)' : <span className="text-red-500">*</span>}</label><input type="password" value={password} onChange={e => setPassword(e.target.value)} className="w-full p-2 border rounded-md" /></div>
+                  {/* Password field is no longer strictly necessary for clients */}
+                  <div><label className="block text-sm font-medium">密码 {clientToEdit ? '(留空即不修改)' : '(可选)'}</label><input type="password" value={password} onChange={e => setPassword(e.target.value)} className="w-full p-2 border rounded-md" /></div>
                 </>}
                 <div><label className="block text-sm font-medium">性别</label><select name="gender" value={formData.gender} onChange={handleChange} className="w-full p-2 border rounded-md"><option>未透露</option><option>男</option><option>女</option><option>其他</option></select></div>
                 <div><label className="block text-sm font-medium">在读年级/职业</label><input type="text" name="grade" value={formData.grade} onChange={handleChange} className="w-full p-2 border rounded-md" /></div>
@@ -1857,4 +1895,4 @@
     ReactDOM.createRoot(document.getElementById('root')).render(<App />);
   </script>
 </body>
-</html>
+      </html>
