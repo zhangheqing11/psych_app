@@ -123,7 +123,7 @@ def get_assessment_prompt_text():
 	除此以外仍然关键的要素有：共情能力、来访意识与无意识对他人的期待和对关系的幻想。 
 	两种关系问题：无意识投射与幻想、缺乏社交功能。前者揭露，后者支持
 	在成长的过程中，小时候和重要他人的互动为他们整个人生中与人互动的方式打下了不可磨灭的烙印。被爱护和照料得很好的人学会了期待从他人那里也得到这些，而被虐待或忽视的人学会了预期被虐待。即使人们意识不到这些内化的无意识的关系模式和幻想，也依然影响着他们的每一次行动。
-	这些幻想之所以残留在意识之外，是因为它们引发了羞愧、焦虑或其他令人不舒服的强烈情感。如果他们意识不到这些无意识的需求，人们就无法选择能和他们建立成熟满意的人际关系的他人。甚至意识层面的需求和无意识的需求有所冲突。
+	这些幻想之所以残留在意识之外，是因为它们引发了羞愧、焦虑或其他令人不舒服的强烈情感。如果他们意识不到这些无意识的需求，人们就无法选择能和他们建立成熟满意的人际关系的人。甚至意识层面的需求和无意识的需求有所冲突。
 	社交功能包括：共情能力、对自我羞耻的程度、识别社会性线索的能力。这些都影响着融入人际关系的能力。
 	以资访关系为模板，检查过往模式的重现并提供修正机会。如咨询师反馈自己的想法和感受，修正来访的错误知觉；强化适应性的防御并取代非适应性的（适应性的判断标准）；通过来访猜测咨询师-咨询师反馈，提升心智化功能等。最终使来访认清过往模式，并开始憧憬他们可以拥有对身边的人更为现实的、大不相同的期待
 	3.适应功能：面对压力的调整
@@ -268,75 +268,14 @@ def login():
     if not user:
         return jsonify({"message": "用户不存在"}), 404
     
-    # [优化点 1] 来访者仅需用户名即可登录
-    if role_attempt == 'client':
-        if user['role'] == 'client':
-            return jsonify({"message": f"欢迎回来, {username}!", "username": username, "role": user['role']}), 200
-        else:
-            return jsonify({"message": "角色不正确"}), 401
-    
+    # [OPTIMIZATION 1] 来访者登录，仅需用户名
+    if user['role'] == 'client' and role_attempt == 'client':
+        return jsonify({"message": f"欢迎回来, {username}!", "username": username, "role": user['role']}), 200
+
     if user['password'] == password and user['role'] == role_attempt:
         return jsonify({"message": f"欢迎回来, {username}!", "username": username, "role": user['role']}), 200
     else:
         return jsonify({"message": "用户名、密码或角色不正确"}), 401
-
-# [优化点 2] 咨询师创建来访者的新API
-@app.route('/api/counselor/create_client', methods=['POST'])
-def create_client_by_counselor():
-    data = request.get_json()
-    counselor_username = data.get('counselorUsername')
-    new_client_username = data.get('newClientUsername')
-
-    if not all([counselor_username, new_client_username]):
-        return jsonify({"message": "必须提供咨询师用户名和新来访者用户名"}), 400
-
-    all_data = read_data()
-
-    # 检查咨询师是否存在
-    counselor_index = next((i for i, c in enumerate(all_data['counselor_data']['counselors']) if c.get('username') == counselor_username), -1)
-    if counselor_index == -1:
-        return jsonify({"message": "操作的咨询师不存在"}), 404
-
-    # 检查新来访者用户名是否已存在
-    if new_client_username in all_data['users']:
-        return jsonify({"message": "此来访者用户名已存在"}), 409
-
-    # 创建新来访者用户 (密码设为禁用，因为他们不需要密码登录)
-    all_data['users'][new_client_username] = {"password": "disabled", "role": "client"}
-
-    # 创建新来访者档案
-    binding_code = ''.join(random.choices(string.ascii_uppercase + string.digits, k=6))
-    new_client_id = f"client-{int(time.time())}"
-    new_client_entry = {
-        "id": new_client_id, 
-        "username": new_client_username, 
-        "name": new_client_username,
-        "age": "", "gender": "未透露", "contact": "", "sessions": [], 
-        "joinDate": time.strftime("%Y-%m-%d"),
-        "binding_code": binding_code,
-        "grade": "", "sexualOrientation": "", "referredBy": None,
-        "historyOfIllness": "", "mentalStateScore": "5",
-        "disabilityStatus": "", "religiousBelief": "",
-        "ethnicIdentity": "", "personalFinance": "",
-        "familyFinance": ""
-    }
-    all_data['counselor_data']['clients'].append(new_client_entry)
-    
-    # 将来访者分配给该咨询师
-    if 'assignedClientIds' not in all_data['counselor_data']['counselors'][counselor_index]:
-        all_data['counselor_data']['counselors'][counselor_index]['assignedClientIds'] = []
-    all_data['counselor_data']['counselors'][counselor_index]['assignedClientIds'].append(new_client_id)
-
-    write_data(all_data)
-    
-    return jsonify({
-        "message": f"来访者 '{new_client_username}' 创建成功并已分配给您。请告知来访者使用其用户名登录，并向您提供此添加口令。",
-        "new_client": {
-            "username": new_client_username,
-            "binding_code": binding_code
-        }
-    }), 201
-
 
 # --- 管理员数据API ---
 @app.route('/api/data/manager', methods=['GET'])
@@ -446,6 +385,53 @@ def assign_client_to_counselor():
 
     write_data(all_data)
     return jsonify({"message": "来访者分配成功"}), 200
+
+# [OPTIMIZATION 2] 新增API: 允许咨询师创建并分配来访者
+@app.route('/api/counselor/create_client', methods=['POST'])
+def create_client_by_counselor():
+    data = request.get_json()
+    counselor_username = data.get('counselorUsername')
+    new_client_username = data.get('newClientUsername')
+
+    if not all([counselor_username, new_client_username]):
+        return jsonify({"message": "需要提供咨询师用户名和新来访者用户名"}), 400
+
+    all_data = read_data()
+
+    # 检查新用户名是否已存在
+    if new_client_username in all_data['users'] or new_client_username == MANAGER_USER['username']:
+        return jsonify({"message": "该来访者用户名已存在"}), 409
+    
+    # 查找咨询师
+    counselor_index = next((i for i, c in enumerate(all_data['counselor_data']['counselors']) if c.get('username') == counselor_username), -1)
+    if counselor_index == -1:
+        return jsonify({"message": "操作的咨询师不存在"}), 404
+
+    # 1. 在 users 中创建用户 (密码为空)
+    all_data['users'][new_client_username] = {"password": "", "role": "client"}
+
+    # 2. 在 clients 中创建档案
+    binding_code = ''.join(random.choices(string.ascii_uppercase + string.digits, k=6))
+    new_client_id = f"client-{int(time.time())}"
+    new_client_entry = {
+        "id": new_client_id, "username": new_client_username, "name": new_client_username, 
+        "age": "", "gender": "未透露", "contact": "", "sessions": [], 
+        "joinDate": time.strftime("%Y-%m-%d"), "binding_code": binding_code, "grade": "", 
+        "sexualOrientation": "", "referredBy": "", "historyOfIllness": "", 
+        "mentalStateScore": "5", "disabilityStatus": "", "religiousBelief": "",
+        "ethnicIdentity": "", "personalFinance": "", "familyFinance": "",
+    }
+    all_data['counselor_data']['clients'].append(new_client_entry)
+    
+    # 3. 将新来访者分配给当前咨询师
+    if 'assignedClientIds' not in all_data['counselor_data']['counselors'][counselor_index]:
+        all_data['counselor_data']['counselors'][counselor_index]['assignedClientIds'] = []
+    all_data['counselor_data']['counselors'][counselor_index]['assignedClientIds'].append(new_client_id)
+
+    write_data(all_data)
+
+    return jsonify({"message": f"来访者 '{new_client_username}' 已成功创建并分配给您。"}), 201
+
 
 # --- 来访者数据API ---
 @app.route('/api/data/all', methods=['GET'])
