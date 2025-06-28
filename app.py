@@ -268,10 +268,75 @@ def login():
     if not user:
         return jsonify({"message": "用户不存在"}), 404
     
+    # [优化点 1] 来访者仅需用户名即可登录
+    if role_attempt == 'client':
+        if user['role'] == 'client':
+            return jsonify({"message": f"欢迎回来, {username}!", "username": username, "role": user['role']}), 200
+        else:
+            return jsonify({"message": "角色不正确"}), 401
+    
     if user['password'] == password and user['role'] == role_attempt:
         return jsonify({"message": f"欢迎回来, {username}!", "username": username, "role": user['role']}), 200
     else:
         return jsonify({"message": "用户名、密码或角色不正确"}), 401
+
+# [优化点 2] 咨询师创建来访者的新API
+@app.route('/api/counselor/create_client', methods=['POST'])
+def create_client_by_counselor():
+    data = request.get_json()
+    counselor_username = data.get('counselorUsername')
+    new_client_username = data.get('newClientUsername')
+
+    if not all([counselor_username, new_client_username]):
+        return jsonify({"message": "必须提供咨询师用户名和新来访者用户名"}), 400
+
+    all_data = read_data()
+
+    # 检查咨询师是否存在
+    counselor_index = next((i for i, c in enumerate(all_data['counselor_data']['counselors']) if c.get('username') == counselor_username), -1)
+    if counselor_index == -1:
+        return jsonify({"message": "操作的咨询师不存在"}), 404
+
+    # 检查新来访者用户名是否已存在
+    if new_client_username in all_data['users']:
+        return jsonify({"message": "此来访者用户名已存在"}), 409
+
+    # 创建新来访者用户 (密码设为禁用，因为他们不需要密码登录)
+    all_data['users'][new_client_username] = {"password": "disabled", "role": "client"}
+
+    # 创建新来访者档案
+    binding_code = ''.join(random.choices(string.ascii_uppercase + string.digits, k=6))
+    new_client_id = f"client-{int(time.time())}"
+    new_client_entry = {
+        "id": new_client_id, 
+        "username": new_client_username, 
+        "name": new_client_username,
+        "age": "", "gender": "未透露", "contact": "", "sessions": [], 
+        "joinDate": time.strftime("%Y-%m-%d"),
+        "binding_code": binding_code,
+        "grade": "", "sexualOrientation": "", "referredBy": None,
+        "historyOfIllness": "", "mentalStateScore": "5",
+        "disabilityStatus": "", "religiousBelief": "",
+        "ethnicIdentity": "", "personalFinance": "",
+        "familyFinance": ""
+    }
+    all_data['counselor_data']['clients'].append(new_client_entry)
+    
+    # 将来访者分配给该咨询师
+    if 'assignedClientIds' not in all_data['counselor_data']['counselors'][counselor_index]:
+        all_data['counselor_data']['counselors'][counselor_index]['assignedClientIds'] = []
+    all_data['counselor_data']['counselors'][counselor_index]['assignedClientIds'].append(new_client_id)
+
+    write_data(all_data)
+    
+    return jsonify({
+        "message": f"来访者 '{new_client_username}' 创建成功并已分配给您。请告知来访者使用其用户名登录，并向您提供此添加口令。",
+        "new_client": {
+            "username": new_client_username,
+            "binding_code": binding_code
+        }
+    }), 201
+
 
 # --- 管理员数据API ---
 @app.route('/api/data/manager', methods=['GET'])
@@ -472,49 +537,4 @@ def get_conceptualization():
     client_info = data.get('client_info', {})
     if 'binding_code' in client_info:
         del client_info['binding_code']
-    user_prompt = f"来访者基本信息:\n{json.dumps(client_info, indent=2, ensure_ascii=False)}\n\n咨询逐字稿内容:\n---\n{data.get('transcript_content')}\n---"
-    try:
-        content = call_gemini_api(get_conceptualization_prompt_text(), user_prompt)
-        return jsonify({"status": "Complete", "content": content})
-    except Exception as e:
-        return jsonify({"error": f"AI生成失败: {e}"}), 500
-
-@app.route('/api/ai/assessment', methods=['POST'])
-def get_assessment():
-    data = request.json
-    client_info = data.get('client_info', {})
-    if 'binding_code' in client_info:
-        del client_info['binding_code']
-    user_prompt = f"来访者基本信息:\n{json.dumps(client_info, indent=2, ensure_ascii=False)}\n\n咨询逐字稿内容:\n---\n{data.get('transcript_content')}\n---"
-    try:
-        content = call_gemini_api(get_assessment_prompt_text(), user_prompt)
-        return jsonify({"status": "Complete", "content": content})
-    except Exception as e:
-        return jsonify({"error": f"AI生成失败: {e}"}), 500
-
-@app.route('/api/ai/supervision', methods=['POST'])
-def get_supervision():
-    data = request.json
-    client_info = data.get('client_info', {})
-    if 'binding_code' in client_info:
-        del client_info['binding_code']
-    prompt_for_supervision = f"来访者基本信息:\n{json.dumps(client_info, indent=2, ensure_ascii=False)}\n\n咨询逐字稿内容:\n{data.get('transcript_content')}\n\nAI生成的个案概念化:\n{data.get('conceptualization_content')}\n\nAI生成的来访者评估:\n{data.get('assessment_content')}"
-    try:
-        content = call_gemini_api(get_supervision_prompt_text(), prompt_for_supervision)
-        return jsonify({"success": True, "supervision": {"status": "Complete", "content": content}})
-    except Exception as e:
-        return jsonify({"error": f"服务器内部错误: {e}"}), 500
-
-# --- 前端文件服务路由 ---
-@app.route('/', defaults={'path': ''})
-@app.route('/<path:path>')
-def serve_frontend(path):
-    if path != "" and os.path.exists(os.path.join(app.static_folder, path)):
-        return send_from_directory(app.static_folder, path)
-    else:
-        return send_from_directory(app.static_folder, 'index.html')
-
-
-if __name__ == '__main__':
-    port = int(os.environ.get('PORT', 5000))
-    app.run(host='0.0.0.0', port=port, debug=False)
+    user_prompt = f"来访者基本信息:\n{json.dumps(client_info, indent=2,
