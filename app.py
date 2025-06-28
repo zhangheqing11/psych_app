@@ -537,4 +537,49 @@ def get_conceptualization():
     client_info = data.get('client_info', {})
     if 'binding_code' in client_info:
         del client_info['binding_code']
-    user_prompt = f"来访者基本信息:\n{json.dumps(client_info, indent=2,
+    user_prompt = f"来访者基本信息:\n{json.dumps(client_info, indent=2, ensure_ascii=False)}\n\n咨询逐字稿内容:\n---\n{data.get('transcript_content')}\n---"
+    try:
+        content = call_gemini_api(get_conceptualization_prompt_text(), user_prompt)
+        return jsonify({"status": "Complete", "content": content})
+    except Exception as e:
+        return jsonify({"error": f"AI生成失败: {e}"}), 500
+
+@app.route('/api/ai/assessment', methods=['POST'])
+def get_assessment():
+    data = request.json
+    client_info = data.get('client_info', {})
+    if 'binding_code' in client_info:
+        del client_info['binding_code']
+    user_prompt = f"来访者基本信息:\n{json.dumps(client_info, indent=2, ensure_ascii=False)}\n\n咨询逐字稿内容:\n---\n{data.get('transcript_content')}\n---"
+    try:
+        content = call_gemini_api(get_assessment_prompt_text(), user_prompt)
+        return jsonify({"status": "Complete", "content": content})
+    except Exception as e:
+        return jsonify({"error": f"AI生成失败: {e}"}), 500
+
+@app.route('/api/ai/supervision', methods=['POST'])
+def get_supervision():
+    data = request.json
+    client_info = data.get('client_info', {})
+    if 'binding_code' in client_info:
+        del client_info['binding_code']
+    prompt_for_supervision = f"来访者基本信息:\n{json.dumps(client_info, indent=2, ensure_ascii=False)}\n\n咨询逐字稿内容:\n{data.get('transcript_content')}\n\nAI生成的个案概念化:\n{data.get('conceptualization_content')}\n\nAI生成的来访者评估:\n{data.get('assessment_content')}"
+    try:
+        content = call_gemini_api(get_supervision_prompt_text(), prompt_for_supervision)
+        return jsonify({"success": True, "supervision": {"status": "Complete", "content": content}})
+    except Exception as e:
+        return jsonify({"error": f"服务器内部错误: {e}"}), 500
+
+# --- 前端文件服务路由 ---
+@app.route('/', defaults={'path': ''})
+@app.route('/<path:path>')
+def serve_frontend(path):
+    if path != "" and os.path.exists(os.path.join(app.static_folder, path)):
+        return send_from_directory(app.static_folder, path)
+    else:
+        return send_from_directory(app.static_folder, 'index.html')
+
+
+if __name__ == '__main__':
+    port = int(os.environ.get('PORT', 5000))
+    app.run(host='0.0.0.0', port=port, debug=False)
