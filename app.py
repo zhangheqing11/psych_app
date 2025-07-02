@@ -239,11 +239,10 @@ def register():
 
         if not any(c.get('username') == username for c in all_data['counselor_data']['counselors']):
             new_counselor_entry = {
-                "id": f"counselor-{int(time.time())}", "username": username, "name": username, 
-                "modality": "待填写", 
-                "clinicalBackground": "",
-                "contactInfo": "", # 优化点3: 添加联系方式字段
-                "assignedClientIds": []
+                "id": f"counselor-{int(time.time())}", "username": username, "name": username,
+                "age": "", "gender": "未透露", "university": "", "statement": "",
+                "photo_base64": "", "modality": "待填写", "clinicalBackground": "",
+                "contactInfo": "", "assignedClientIds": []
             }
             all_data['counselor_data']['counselors'].append(new_counselor_entry)
 
@@ -268,7 +267,7 @@ def login():
     if not user:
         return jsonify({"message": "用户不存在"}), 404
     
-    # [OPTIMIZATION 1] 来访者登录，仅需用户名
+    # 来访者登录，仅需用户名
     if user['role'] == 'client' and role_attempt == 'client':
         return jsonify({"message": f"欢迎回来, {username}!", "username": username, "role": user['role']}), 200
 
@@ -299,19 +298,13 @@ def get_counselor_data(username):
     if not current_counselor:
         return jsonify({"message": "咨询师不存在"}), 404
 
-    assigned_client_ids = current_counselor.get('assignedClientIds', [])
-    assigned_clients = [client for client in c_data.get('clients', []) if client.get('id') in assigned_client_ids]
-    
-    all_assigned_ids = set()
-    for c in c_data.get('counselors', []):
-        all_assigned_ids.update(c.get('assignedClientIds', []))
-
-    unassigned_clients = [client for client in c_data.get('clients', []) if client.get('id') not in all_assigned_ids]
+    # REQ 2: Counselor sees all clients and counselors for global schedule view
+    all_clients = c_data.get('clients', [])
+    all_counselors = c_data.get('counselors', [])
     
     response_data = {
-        "counselors": c_data.get('counselors', []),
-        "assigned_clients": assigned_clients,
-        "unassigned_clients": unassigned_clients,
+        "counselors": all_counselors,
+        "clients": all_clients,
         "appointments": c_data.get('appointments', [])
     }
     return jsonify(response_data)
@@ -327,25 +320,37 @@ def save_counselor_data(username):
 
     counselor_profile = all_data['counselor_data']['counselors'][counselor_index]
     
+    # REQ 3: Enhanced counselor profile editing
     if 'update_profile' in new_data:
         profile_updates = new_data['update_profile']
         counselor_profile['name'] = profile_updates.get('name', counselor_profile['name'])
         counselor_profile['modality'] = profile_updates.get('modality', counselor_profile['modality'])
         counselor_profile['clinicalBackground'] = profile_updates.get('clinicalBackground', counselor_profile.get('clinicalBackground', ''))
-        counselor_profile['contactInfo'] = profile_updates.get('contactInfo', counselor_profile.get('contactInfo', '')) # 优化点3: 保存联系方式
+        counselor_profile['contactInfo'] = profile_updates.get('contactInfo', counselor_profile.get('contactInfo', ''))
+        counselor_profile['age'] = profile_updates.get('age', counselor_profile.get('age', ''))
+        counselor_profile['gender'] = profile_updates.get('gender', counselor_profile.get('gender', ''))
+        counselor_profile['university'] = profile_updates.get('university', counselor_profile.get('university', ''))
+        counselor_profile['statement'] = profile_updates.get('statement', counselor_profile.get('statement', ''))
+        if 'photo_base64' in profile_updates: # Only update photo if a new one was provided
+             counselor_profile['photo_base64'] = profile_updates.get('photo_base64')
         all_data['counselor_data']['counselors'][counselor_index] = counselor_profile
     
     allowed_client_ids = set(counselor_profile.get('assignedClientIds', []))
 
     if 'clients' in new_data:
         for updated_client in new_data.get('clients', []):
-            if updated_client.get('id') in allowed_client_ids:
-                client_index_to_update = next((i for i, client in enumerate(all_data['counselor_data']['clients']) if client.get('id') == updated_client.get('id')), -1)
-                if client_index_to_update != -1:
-                    existing_sessions = all_data['counselor_data']['clients'][client_index_to_update].get('sessions', [])
-                    updated_client_data = {**all_data['counselor_data']['clients'][client_index_to_update], **updated_client}
-                    updated_client_data['sessions'] = existing_sessions
-                    all_data['counselor_data']['clients'][client_index_to_update] = updated_client_data
+            client_id_to_check = updated_client.get('id')
+            # Counselor can now edit any client after assigning them
+            client_index_to_update = next((i for i, client in enumerate(all_data['counselor_data']['clients']) if client.get('id') == client_id_to_check), -1)
+            if client_index_to_update != -1:
+                # First, ensure client is assigned to this counselor if not already
+                if client_id_to_check not in allowed_client_ids:
+                     all_data['counselor_data']['counselors'][counselor_index]['assignedClientIds'].append(client_id_to_check)
+                # Then, update client data
+                existing_sessions = all_data['counselor_data']['clients'][client_index_to_update].get('sessions', [])
+                updated_client_data = {**all_data['counselor_data']['clients'][client_index_to_update], **updated_client}
+                updated_client_data['sessions'] = existing_sessions
+                all_data['counselor_data']['clients'][client_index_to_update] = updated_client_data
 
     if 'appointments' in new_data:
         all_data['counselor_data']['appointments'] = new_data.get('appointments', [])
@@ -353,84 +358,58 @@ def save_counselor_data(username):
     write_data(all_data)
     return jsonify({"message": "数据保存成功"}), 200
 
-
-@app.route('/api/counselor/assign', methods=['POST'])
-def assign_client_to_counselor():
+# REQ 1.1 & 1.2: This API is part of the new workflow. The old "create_client" is removed.
+@app.route('/api/counselor/verify_client_code', methods=['POST'])
+def verify_client_code():
     data = request.get_json()
-    counselor_username = data.get('counselorUsername')
-    client_id = data.get('clientId')
     binding_code = data.get('binding_code')
-
-    if not all([counselor_username, client_id, binding_code]):
-        return jsonify({"message": "需要提供咨询师、来访者和添加口令"}), 400
+    if not binding_code:
+        return jsonify({"message": "需要提供添加口令"}), 400
 
     all_data = read_data()
-    
-    client_to_assign = next((c for c in all_data['counselor_data']['clients'] if c.get('id') == client_id), None)
+    client_to_assign = next((c for c in all_data['counselor_data']['clients'] if c.get('binding_code') == binding_code), None)
+
     if not client_to_assign:
-        return jsonify({"message": "来访者不存在"}), 404
-        
-    if client_to_assign.get('binding_code') != binding_code:
-        return jsonify({"message": "添加口令不正确"}), 403
-
-    counselor_index = next((i for i, c in enumerate(all_data['counselor_data']['counselors']) if c.get('username') == counselor_username), -1)
-    if counselor_index == -1:
-        return jsonify({"message": "咨询师不存在"}), 404
-        
-    if 'assignedClientIds' not in all_data['counselor_data']['counselors'][counselor_index]:
-        all_data['counselor_data']['counselors'][counselor_index]['assignedClientIds'] = []
+        return jsonify({"message": "添加口令不正确或无效"}), 404
     
-    if client_id not in all_data['counselor_data']['counselors'][counselor_index]['assignedClientIds']:
-        all_data['counselor_data']['counselors'][counselor_index]['assignedClientIds'].append(client_id)
+    # Check if client is already assigned to ANY counselor
+    for counselor in all_data['counselor_data']['counselors']:
+        if client_to_assign['id'] in counselor.get('assignedClientIds', []):
+            return jsonify({"message": f"该来访者已被咨询师 '{counselor['name']}' 添加"}), 409
 
-    write_data(all_data)
-    return jsonify({"message": "来访者分配成功"}), 200
+    return jsonify(client_to_assign), 200
 
-# [OPTIMIZATION 2] 新增API: 允许咨询师创建并分配来访者
-@app.route('/api/counselor/create_client', methods=['POST'])
-def create_client_by_counselor():
+# REQ 5 & Client REQ 2: API for counselor to respond to a booking request
+@app.route('/api/counselor/respond_appointment', methods=['POST'])
+def respond_appointment():
     data = request.get_json()
+    appointment_id = data.get('appointmentId')
+    new_status = data.get('status') # "confirmed" or "rejected"
     counselor_username = data.get('counselorUsername')
-    new_client_username = data.get('newClientUsername')
 
-    if not all([counselor_username, new_client_username]):
-        return jsonify({"message": "需要提供咨询师用户名和新来访者用户名"}), 400
+    if not all([appointment_id, new_status, counselor_username]):
+        return jsonify({"message": "缺少必要信息"}), 400
+    
+    if new_status not in ["confirmed", "rejected"]:
+        return jsonify({"message": "无效的状态"}), 400
 
     all_data = read_data()
-
-    # 检查新用户名是否已存在
-    if new_client_username in all_data['users'] or new_client_username == MANAGER_USER['username']:
-        return jsonify({"message": "该来访者用户名已存在"}), 409
     
-    # 查找咨询师
-    counselor_index = next((i for i, c in enumerate(all_data['counselor_data']['counselors']) if c.get('username') == counselor_username), -1)
-    if counselor_index == -1:
-        return jsonify({"message": "操作的咨询师不存在"}), 404
+    # Find appointment and check if this counselor is the correct one
+    appt_index = next((i for i, a in enumerate(all_data['counselor_data']['appointments']) if a.get('id') == appointment_id), -1)
+    if appt_index == -1:
+        return jsonify({"message": "预约不存在"}), 404
+        
+    counselor_id = all_data['counselor_data']['appointments'][appt_index].get('counselorId')
+    counselor = next((c for c in all_data['counselor_data']['counselors'] if c.get('id') == counselor_id), None)
 
-    # 1. 在 users 中创建用户 (密码为空)
-    all_data['users'][new_client_username] = {"password": "", "role": "client"}
+    if not counselor or counselor.get('username') != counselor_username:
+        return jsonify({"message": "无权操作此预约"}), 403
 
-    # 2. 在 clients 中创建档案
-    binding_code = ''.join(random.choices(string.ascii_uppercase + string.digits, k=6))
-    new_client_id = f"client-{int(time.time())}"
-    new_client_entry = {
-        "id": new_client_id, "username": new_client_username, "name": new_client_username, 
-        "age": "", "gender": "未透露", "contact": "", "sessions": [], 
-        "joinDate": time.strftime("%Y-%m-%d"), "binding_code": binding_code, "grade": "", 
-        "sexualOrientation": "", "referredBy": "", "historyOfIllness": "", 
-        "mentalStateScore": "5", "disabilityStatus": "", "religiousBelief": "",
-        "ethnicIdentity": "", "personalFinance": "", "familyFinance": "",
-    }
-    all_data['counselor_data']['clients'].append(new_client_entry)
-    
-    # 3. 将新来访者分配给当前咨询师
-    if 'assignedClientIds' not in all_data['counselor_data']['counselors'][counselor_index]:
-        all_data['counselor_data']['counselors'][counselor_index]['assignedClientIds'] = []
-    all_data['counselor_data']['counselors'][counselor_index]['assignedClientIds'].append(new_client_id)
-
+    all_data['counselor_data']['appointments'][appt_index]['status'] = new_status
     write_data(all_data)
-
-    return jsonify({"message": f"来访者 '{new_client_username}' 已成功创建并分配给您。"}), 201
+    
+    return jsonify({"message": f"预约已更新为'{new_status}'"}), 200
 
 
 # --- 来访者数据API ---
@@ -438,22 +417,31 @@ def create_client_by_counselor():
 def get_all_data_for_client():
     all_data = read_data()
     clients_data = all_data.get('counselor_data', {}).get('clients', [])
-    # 出于安全考虑，从这个公共端点移除所有人的绑定码
+    counselors_data = all_data.get('counselor_data', {}).get('counselors', [])
+    appointments_data = all_data.get('counselor_data', {}).get('appointments', [])
+
+    # For security, remove sensitive info from what is sent to the client
     safe_clients = []
     for client in clients_data:
         client_copy = client.copy()
         if 'binding_code' in client_copy:
             del client_copy['binding_code']
         safe_clients.append(client_copy)
+    
+    safe_counselors = []
+    for counselor in counselors_data:
+        counselor_copy = counselor.copy()
+        if 'assignedClientIds' in counselor_copy:
+            del counselor_copy['assignedClientIds']
+        safe_counselors.append(counselor_copy)
             
     client_safe_data = {
         "clients": safe_clients,
-        "counselors": all_data.get('counselor_data', {}).get('counselors', []),
-        "appointments": all_data.get('counselor_data', {}).get('appointments', [])
+        "counselors": safe_counselors,
+        "appointments": appointments_data
     }
     return jsonify(client_safe_data)
 
-# 优化点2: 新增API，让登录的来访者能获取自己完整的个人信息（包括绑定码）
 @app.route('/api/client/me/<username>', methods=['GET'])
 def get_client_self_data(username):
     all_data = read_data()
@@ -474,13 +462,11 @@ def save_client_data(username):
     if client_index == -1:
         return jsonify({"message": "来访者不存在"}), 404
 
-    # 保留核心数据不被覆盖
     original_client = all_data['counselor_data']['clients'][client_index]
     sessions = original_client.get('sessions', [])
     binding_code = original_client.get('binding_code')
     join_date = original_client.get('joinDate')
 
-    # 将更新与原始数据合并
     all_data['counselor_data']['clients'][client_index] = {
         **original_client, 
         **updated_profile,
@@ -492,11 +478,47 @@ def save_client_data(username):
     write_data(all_data)
     return jsonify({"message": "您的信息已更新"}), 200
 
+# Client REQ 2: API for client to request a booking
+@app.route('/api/client/request_appointment', methods=['POST'])
+def request_appointment():
+    data = request.get_json()
+    
+    if not all(k in data for k in ['date', 'time', 'location', 'clientId', 'counselorId']):
+        return jsonify({"message": "缺少预约信息"}), 400
+
+    all_data = read_data()
+
+    new_appointment = {
+        "id": f"appt-{int(time.time())}",
+        "date": data['date'],
+        "time": data['time'],
+        "location": data['location'],
+        "clientId": data['clientId'],
+        "counselorId": data['counselorId'],
+        "notes": data.get('notes', ''),
+        "status": "pending"  # New appointments from clients are pending
+    }
+
+    all_data['counselor_data']['appointments'].append(new_appointment)
+    write_data(all_data)
+
+    return jsonify({"message": "您的预约请求已发送，请等待咨询师确认。"}), 201
+
+
 # --- AI 分析 API ---
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "YOUR_GEMINI_API_KEY")
+# REQ 4: Ensure API key is handled correctly via environment variable
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
+if not GEMINI_API_KEY:
+    print("！！！！！！！！！！！！！！！！！！！！！！！！！！！！！！！！！！！！")
+    print("!!! 警告: 'GEMINI_API_KEY' 环境变量未设置. AI功能将无法使用. !!!")
+    print("！！！！！！！！！！！！！！！！！！！！！！！！！！！！！！！！！！！！")
+
 GEMINI_API_URL = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key={GEMINI_API_KEY}"
 
 def call_gemini_api(system_prompt, user_prompt):
+    if not GEMINI_API_KEY:
+        raise ValueError("Gemini API Key未配置，无法调用AI服务。")
+        
     headers = {'Content-Type': 'application/json'}
     full_prompt = f"{system_prompt}\n\n---\n\n{user_prompt}"
     payload = {
@@ -509,12 +531,24 @@ def call_gemini_api(system_prompt, user_prompt):
         response.raise_for_status()
         data = response.json()
         if 'candidates' not in data or not data['candidates']:
-             raise ValueError("AI响应中没有候选内容。可能已被安全设置拦截。")
+             # Check for safety ratings block
+            if 'promptFeedback' in data and 'blockReason' in data['promptFeedback']:
+                 reason = data['promptFeedback']['blockReason']
+                 raise ValueError(f"AI响应被安全设置拦截。原因: {reason}")
+            raise ValueError("AI响应中没有候选内容。")
         content = data['candidates'][0]['content']['parts'][0]['text']
         return content
+    except requests.exceptions.HTTPError as http_err:
+        app.logger.error(f"调用Gemini API时发生HTTP错误: {http_err}")
+        app.logger.error(f"Response Body: {response.text}")
+        # Provide a more user-friendly error message
+        if response.status_code == 400:
+             raise Exception("请求无效，可能是API密钥问题或格式错误。")
+        if response.status_code == 429:
+             raise Exception("API请求过于频繁，请稍后再试。")
+        raise
     except Exception as e:
         app.logger.error(f"调用Gemini API时出错: {e}")
-        app.logger.error(f"Response Body: {response.text if 'response' in locals() else 'N/A'}")
         raise
 
 @app.route('/api/ai/conceptualization', methods=['POST'])
@@ -528,7 +562,7 @@ def get_conceptualization():
         content = call_gemini_api(get_conceptualization_prompt_text(), user_prompt)
         return jsonify({"status": "Complete", "content": content})
     except Exception as e:
-        return jsonify({"error": f"AI生成失败: {e}"}), 500
+        return jsonify({"status": "Error", "error": f"AI生成失败: {e}"}), 500
 
 @app.route('/api/ai/assessment', methods=['POST'])
 def get_assessment():
@@ -541,7 +575,7 @@ def get_assessment():
         content = call_gemini_api(get_assessment_prompt_text(), user_prompt)
         return jsonify({"status": "Complete", "content": content})
     except Exception as e:
-        return jsonify({"error": f"AI生成失败: {e}"}), 500
+        return jsonify({"status": "Error", "error": f"AI生成失败: {e}"}), 500
 
 @app.route('/api/ai/supervision', methods=['POST'])
 def get_supervision():
@@ -554,7 +588,7 @@ def get_supervision():
         content = call_gemini_api(get_supervision_prompt_text(), prompt_for_supervision)
         return jsonify({"success": True, "supervision": {"status": "Complete", "content": content}})
     except Exception as e:
-        return jsonify({"error": f"服务器内部错误: {e}"}), 500
+        return jsonify({"success": False, "error": f"服务器内部错误: {e}"}), 500
 
 # --- 前端文件服务路由 ---
 @app.route('/', defaults={'path': ''})
