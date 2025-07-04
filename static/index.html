@@ -20,7 +20,7 @@
       background-color: rgba(0, 0, 0, 0.6);
       display: flex; align-items: center; justify-content: center;
       z-index: 1000;
-    }
+}
     .custom-modal-content {
       background: white; padding: 2rem; border-radius: 0.75rem;
       box-shadow: 0 10px 25px rgba(0, 0, 0, 0.1);
@@ -33,19 +33,6 @@
     }
     .custom-modal-button:hover { background-color: #2563EB; }
     .time-slot { display: flex; flex-direction: column; gap: 4px; }
-    .tab-button-active {
-        border-color: #3B82F6;
-        color: #3B82F6;
-        background-color: #EFF6FF;
-    }
-    .tab-button-inactive {
-        border-color: transparent;
-        color: #6B7280;
-    }
-    .tab-button-inactive:hover {
-        color: #111827;
-        border-color: #D1D5DB;
-    }
   </style>
 </head>
 <body class="bg-gray-100">
@@ -204,7 +191,7 @@
       }
       
       const renderPortal = () => {
-          if (isLoading || (currentUser && !appData)) {
+          if (isLoading || (currentUser && !appData && currentUser.role !== 'client')) {
               return <div className="min-h-screen flex items-center justify-center">正在加载...</div>
           }
           if (!currentUser) {
@@ -216,7 +203,7 @@
               case 'counselor':
                   return <CounselorPortal user={currentUser} initialData={appData} onLogout={handleLogout} showAlert={showAlert} globalLoadingMessage={globalLoadingMessage} setGlobalLoadingMessage={setGlobalLoadingMessage} fetchData={fetchData} />;
               case 'client':
-                  return <ClientPortal user={currentUser} allData={appData} onLogout={handleLogout} onSave={saveData} showAlert={showAlert} fetchData={fetchData}/>;
+                  return <ClientPortal user={currentUser} allData={appData} onLogout={handleLogout} onSave={saveData} showAlert={showAlert} />;
               default:
                   return <div className="min-h-screen flex items-center justify-center">无法识别的用户角色。</div>;
           }
@@ -355,7 +342,7 @@
         };
 
         const handleDeleteCounselor = (counselorId) => {
-            const counselorToDelete = allData.counselor_data.counselors.find(c => c.id === counselorId);
+            const counselorToDelete = allData.counselor_data.counselors.find(c => c.id !== counselorId);
             if(!counselorToDelete) return;
             if (allData.counselor_data.appointments.some(a => a.counselorId === counselorId)) {
                 return showAlert('无法删除该咨询师，其仍有关联的日程安排。');
@@ -377,7 +364,7 @@
                 const index = allData.counselor_data.appointments.findIndex(a => a.id === appointmentData.id);
                 updatedAppointments = [...allData.counselor_data.appointments];
                 if (index > -1) updatedAppointments[index] = appointmentData;
-                else updatedAppointments.push({ ...appointmentData, id: `appt-${Date.now()}`, status: 'confirmed' });
+                else updatedAppointments.push({ ...appointmentData, id: `appt-${Date.now()}` });
             }
             handleUpdateData({ ...allData, counselor_data: { ...allData.counselor_data, appointments: updatedAppointments } });
         };
@@ -429,7 +416,6 @@
                                 clients={counselor_data.clients} 
                                 counselors={counselor_data.counselors} 
                                 onUpdateAppointments={handleUpdateAppointments} 
-                                isManagerView={true}
                             />;
                 default: return <div/>;
             }
@@ -468,10 +454,9 @@
     // ================================================================================================
     // =================================== CLIENT PORTAL START ========================================
     // ================================================================================================
-    const ClientPortal = ({ user, allData, onLogout, onSave, showAlert, fetchData }) => {
-        const { useState, useEffect } = React;
+    const ClientPortal = ({ user, allData, onLogout, onSave, showAlert }) => {
+        const { useState, useMemo, useEffect } = React;
         const [clientProfile, setClientProfile] = useState(null);
-        const [activeTab, setActiveTab] = useState('info');
 
         useEffect(() => {
             const fetchSelfData = async () => {
@@ -488,34 +473,27 @@
             fetchSelfData();
         }, [user.username]);
 
-        const renderTabContent = () => {
-            switch(activeTab) {
-                case 'info':
-                    return <ClientInfoTab clientProfile={clientProfile} allData={allData} user={user} />;
-                case 'counselors':
-                    return <CounselorDirectoryTab counselors={allData?.counselors || []} />;
-                case 'booking':
-                    return <ClientBookingTab 
-                                clientProfile={clientProfile} 
-                                appointments={allData?.appointments || []} 
-                                counselors={allData?.counselors || []}
-                                showAlert={showAlert}
-                                fetchData={fetchData}
-                            />;
-                default:
-                    return null;
-            }
-        };
+        const assignedCounselor = clientProfile && allData && allData.counselors ? allData.counselors.find(c => c.assignedClientIds?.includes(clientProfile.id)) : null;
+        const clientAppointments = clientProfile && allData && allData.appointments ? allData.appointments.filter(a => a.clientId === clientProfile.id) : [];
+
+        const { totalHours, monthlyHours } = useMemo(() => {
+            if (!clientAppointments) return { totalHours: 0, monthlyHours: 0 };
+            
+            const now = new Date();
+            const oneMonthAgo = new Date(now.getFullYear(), now.getMonth() - 1, now.getDate());
+
+            const total = clientAppointments.length;
+            const monthly = clientAppointments.filter(a => new Date(a.date) >= oneMonthAgo).length;
+            
+            return { totalHours: total, monthlyHours: monthly };
+        }, [clientAppointments]);
         
+        // [BUG FIX] Changed loading condition to be more robust.
         if (!allData || !clientProfile) {
             return <div className="min-h-screen flex items-center justify-center">正在加载您的信息...</div>;
         }
 
-        const tabs = [
-            { id: 'info', label: '我的主页' },
-            { id: 'counselors', label: '咨询师名录' },
-            { id: 'booking', label: '预约咨询' },
-        ];
+        const wechatQrCodeBase64 = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAoHBwgHBgoICAgLCgoLDhgQDg0NDh0VFhEYIx8lJCIfIiEmKzcvJik0KSEiMEExNDk7Pj4+JS5ESUM8SDc9Pjv/2wBDAQoLCw4NDhwQEBw7KCIoOzs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozv/wAARCAAoACgDASIAAhEBAxEB/8QAGQABAQEBAQEAAAAAAAAAAAAAAAcGBQQI/8QAKRAAAQMDAgQGAwAAAAAAAAAAAQIDBAAFEQYHEhMhMUEUFRYiI0Jhcf/EABcBAQEBAQAAAAAAAAAAAAAAAAQBAgP/xAAaEQEBAQEBAQEAAAAAAAAAAAAAAQIDETFB/9oADAMBAAIRAxEAPwDqOkA+V8c+g/c0y0gH6vjB9B+5oDOlKUBEhISok4AFNKUoCn0gH61xY9B+5plpAP1nFv0H7mgM6UpQFSX5cSK2HJT7bKCcBS1BIz7mqtZ3GNGbLsl5tlA6qWoJA/mg89KUrKUpSgKUpSgKUpSgKUpSgKUpSgKUpSgKUpSgKUpSgKUpSgKkYlR5SVqYeQ4ELKFbVBWFDqD7io+pGJUeUlSmHkOBCyitqCthHUH3FAY0pSgP//Z";
 
         return (
             <div className="min-h-screen bg-gray-50 flex flex-col">
@@ -531,46 +509,8 @@
                 </div>
               </header>
               <main className="flex-grow container mx-auto p-4 sm:p-6 lg:p-8 space-y-8">
-                <div className="border-b border-gray-200">
-                    <nav className="-mb-px flex space-x-6 overflow-x-auto">
-                        {tabs.map(tab => (
-                            <button key={tab.id} onClick={() => setActiveTab(tab.id)} 
-                                className={`flex-shrink-0 whitespace-nowrap py-3 px-1 border-b-2 font-medium text-sm ${activeTab === tab.id ? 'tab-button-active' : 'tab-button-inactive'}`}>
-                                {tab.label}
-                            </button>
-                        ))}
-                    </nav>
-                </div>
-                <div className="animate-fadeIn">
-                    {renderTabContent()}
-                </div>
-              </main>
-            </div>
-        );
-    }
-    
-    const ClientInfoTab = ({ clientProfile, allData, user }) => {
-        const { useMemo } = React;
-        const assignedCounselor = clientProfile && allData && allData.counselors ? allData.counselors.find(c => c.assignedClientIds?.includes(clientProfile.id)) : null;
-        const clientAppointments = clientProfile && allData && allData.appointments ? allData.appointments.filter(a => a.clientId === clientProfile.id) : [];
-
-        const { totalHours, monthlyHours } = useMemo(() => {
-            if (!clientAppointments) return { totalHours: 0, monthlyHours: 0 };
-            const confirmedAppointments = clientAppointments.filter(a => a.status === 'confirmed');
-            const now = new Date();
-            const oneMonthAgo = new Date(now.getFullYear(), now.getMonth() - 1, now.getDate());
-
-            const total = confirmedAppointments.length;
-            const monthly = confirmedAppointments.filter(a => new Date(a.date) >= oneMonthAgo).length;
-            
-            return { totalHours: total, monthlyHours: monthly };
-        }, [clientAppointments]);
-        
-        const wechatQrCodeBase64 = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAoHBwgHBgoICAgLCgoLDhgQDg0NDh0VFhEYIx8lJCIfIiEmKzcvJik0KSEiMEExNDk7Pj4+JS5ESUM8SDc9Pjv/2wBDAQoLCw4NDhwQEBw7KCIoOzs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozv/wAARCAAoACgDASIAAhEBAxEB/8QAGQABAQEBAQEAAAAAAAAAAAAAAAcGBQQI/8QAKRAAAQMDAgQGAwAAAAAAAAAAAQIDBAAFEQYHEhMhMUEUFRYiI0Jhcf/EABcBAQEBAQAAAAAAAAAAAAAAAAQBAgP/xAAaEQEBAQEBAQEAAAAAAAAAAAAAAQIDETFB/9oADAMBAAIRAxEAPwDqOkA+V8c+g/c0y0gH6vjB9B+5oDOlKUBEhISok4AFNKUoCn0gH61xY9B+5plpAP1nFv0H7mgM6UpQFSX5cSK2HJT7bKCcBS1BIz7mqtZ3GNGbLsl5tlA6qWoJA/mg89KUrKUpSgKUpSgKUpSgKUpSgKUpSgKUpSgKUpSgKUpSgKUpSgKkYlR5SVqYeQ4ELKFbVBWFDqD7io+pGJUeUlSmHkOBCyitqCthHUH3FAY0pSgP//Z";
-
-        return (
-             <>
-                <div className="bg-white p-6 rounded-lg shadow-md">
+                
+                <div className="bg-white p-6 rounded-lg shadow-md animate-fadeIn">
                     <div className="flex flex-col sm:flex-row items-center gap-8">
                         <div className="flex-shrink-0 text-center">
                             <img src={wechatQrCodeBase64} alt="客服微信" className="w-36 h-36 object-cover rounded-lg shadow-sm mx-auto"/>
@@ -584,6 +524,7 @@
                                 <h3 className="font-semibold text-gray-700">咨询师添加口令</h3>
                                 <p className="text-xs text-gray-500 mt-1">请将此口令提供给您的咨询师，以便他们将您添加到他们的档案中。请勿泄露给他人。</p>
                                 <div className="mt-2 bg-blue-50 text-blue-800 font-mono text-lg tracking-widest p-3 rounded-md text-center">
+                                    {/* [BUG FIX] Added check to prevent crash before clientProfile is loaded */}
                                     {clientProfile && clientProfile.binding_code}
                                 </div>
                             </div>
@@ -611,8 +552,8 @@
                      <div className="bg-white p-6 rounded-lg shadow-md">
                        <h2 className="text-xl font-semibold text-gray-700 mb-4 border-b pb-3">咨询统计</h2>
                        <div className="space-y-3">
-                            <p><strong>总确认时长:</strong> {totalHours} 小时</p>
-                            <p><strong>近一个月确认时长:</strong> {monthlyHours} 小时</p>
+                            <p><strong>总咨询时长:</strong> {totalHours} 小时</p>
+                            <p><strong>近一个月咨询时长:</strong> {monthlyHours} 小时</p>
                        </div>
                     </div>
                 </div>
@@ -621,128 +562,22 @@
                     <h2 className="text-xl font-semibold text-gray-700 mb-4 border-b pb-3">我的日历</h2>
                     <div className="space-y-3">
                         {clientAppointments.length > 0 ? (
-                            clientAppointments.sort((a, b) => new Date(a.date) - new Date(b.date)).map(appt => {
-                                const statusMap = {
-                                    pending: { text: '待确认', color: 'yellow' },
-                                    confirmed: { text: '已确认', color: 'blue' },
-                                    rejected: { text: '已拒绝', color: 'red' },
-                                };
-                                const status = statusMap[appt.status] || { text: appt.status, color: 'gray' };
-                                return (
-                                <div key={appt.id} className={`border-l-4 p-3 rounded-r-lg bg-${status.color}-50 border-${status.color}-500`}>
-                                    <div className="flex justify-between items-center">
-                                        <p className={`font-bold text-${status.color}-800`}>{appt.date} - {appt.time}</p>
-                                        <span className={`px-2 py-1 text-xs font-semibold rounded-full bg-${status.color}-200 text-${status.color}-800`}>{status.text}</span>
-                                    </div>
+                            clientAppointments.sort((a, b) => new Date(a.date) - new Date(b.date)).map(appt => (
+                                <div key={appt.id} className="bg-blue-50 border-l-4 border-blue-500 p-3 rounded-r-lg">
+                                    <p className="font-bold text-blue-800">{appt.date} - {appt.time}</p>
                                     <p className="text-sm text-gray-600">与 {allData.counselors.find(c => c.id === appt.counselorId)?.name || '咨询师'} 的咨询</p>
                                     {appt.location && <p className="text-xs text-gray-500">地点: {appt.location}</p>}
-                                    {appt.status === 'rejected' && <p className="text-xs text-red-600 mt-1">该预约已被拒绝，请联系客服或重新预约。</p>}
                                 </div>
-                                );
-                            })
+                            ))
                         ) : (
                             <p className="text-gray-500 text-center py-4">您目前没有已安排的咨询。</p>
                         )}
                     </div>
                 </div>
-             </>
-        );
-    };
-
-    const CounselorDirectoryTab = ({ counselors }) => {
-        const defaultAvatar = "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0iY3VycmVudENvbG9yIiBjbGFzcz0idy02IGgtNiI+PHBhdGggZmlsbC1ydWxlPSJldmVub2RkIiBkPSJNMTguMzg0IDE0LjgzM2ExLjk5MiAxLjk5MiAwIDAgMSAuMjMyIDEuOTI1bC0uMDE4LjA2NS0yLjY3IDEuOTI0YTEuMzg3IDEuMzg3IDAgMCAwLS41MiAxLjA3M2wwIC4wODQuMDA4LjE5MmMwIC4zOTQtLjE1Ni43NjktLjQzMyAxLjA0NmEuOTkuOTkgMCAwIDEtMS4wNDYuNDMzSDkuNDYyYS45OS45OSAwIDAgMS0xLjA0Ni0uNDMzIDEuNSAxLjUgMCAwIDEtLjQzMy0xLjA0NmwzLjMxLTEwLjYxMmExLjEyNSAxLjEyNSAwIDAgMSAxLjA1NC0uODI1aC4xNThjLjQ3OCAwIC45LjMxNCAxLjA1NC44MjVsMy4zMSAxMC42MTJjMCAuMzA0LjAxLjYwMi4wMzMuODg3bC4wMDYuMDYyYS44MzIuODMyIDAgMCAwIC4xOTQuNTM4IDEuNTIgMS41MiAwIDAgMCAuMjk4LjQxNmMyLjU0MS0xLjgzNCAzLjkxOC00Ljc4MyA0LjM2My03LjQ2MmEuNzUuNzUgMCAxIDAgMS40NjYtLjQzN0MxOS43MjUgMTIuNTQ0IDE4LjA4IDE2LjgxIDE1LjEyIDE5LjU5M2ExLjUgMS41IDAgMCAxLTEuNTY0LjQxSDkuNDYyYTEuNSAxLjUgMCAwIDEtMS41NjQtLjQxQzUuMjE4IDE2LjgxIDMuNTcgMTIuNTQ0IDMuMDMgOS45MDhhLjc1Ljc1IDAgMCAwLTEuNDY2LjQzN2MuNDQ1IDIuNzc5IDEuODI4IDUuNjI4IDQuMzY0IDcuNDYyYTEuNTIgMS41MiAwIDAgMCAuMjk4LS40MTYuODMyLjgzMiAwIDAgMCAuMTk0LS41MzhsLjAwNS0uMDYyYTEuNDkzIDEuNDkzIDAgMCAxIC4wMzQtLjg4N0w5LjE2IDUuMzA0YTEuODc1IDQuMjUgMCAwIDEgMy4xMS0yLjU1NGguMTU3YzEuNTkxIDAgMy4wMTUgMS4wMzYgMy41MiAyLjU1NGwzLjQzNyAxMS4wMmEuOTk5Ljk5OSAwIDAgMC0uNTItMS4wNzNsLTIuNjctMS45MjRhLjk5Mi45OTIgMCAwIDEtLjIzMi0xLjkyNWwuMDE4LS4wNjVjLjMyNy0uOTIzIDEuMjM0LTEuNDUgMi4yMzYtMS4xOTJsLjE1Ny4wNzdjLjk2OC4yNDQgMS42MjggMS4xMTIgMS43MDcgMi4xMDlsLjAxLjE2WiIgY2xpcC1ydWxlPSJldmVub2RkIiAvPjwvc3ZnPg==";
-        return (
-            <div className="bg-white p-6 rounded-lg shadow-md">
-                <h2 className="text-2xl font-semibold text-gray-700 mb-6 border-b pb-4">咨询师名录</h2>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                    {counselors.map(c => (
-                        <div key={c.id} className="bg-gray-50 p-4 rounded-lg border flex gap-4">
-                            <img src={c.photo_base64 || defaultAvatar} alt={c.name} className="w-24 h-24 rounded-full object-cover border-2 border-white shadow-md"/>
-                            <div className="flex-grow">
-                                <h3 className="text-xl font-bold text-blue-700">{c.name}</h3>
-                                <p className="text-sm text-gray-500">{c.gender}, {c.age}岁, {c.university}</p>
-                                <p className="text-sm font-semibold text-gray-700 mt-2">{c.modality}</p>
-                                <p className="text-xs text-gray-600 mt-2 whitespace-pre-wrap">{c.statement || '该咨询师暂未填写个人陈述。'}</p>
-                            </div>
-                        </div>
-                    ))}
-                </div>
+              </main>
             </div>
         );
-    };
-
-    const ClientBookingTab = ({ clientProfile, appointments, counselors, showAlert, fetchData }) => {
-        const { useState } = React;
-        const [bookingData, setBookingData] = useState({
-            date: new Date().toISOString().split('T')[0],
-            time: '09:00',
-            location: 'x1',
-            counselorId: counselors.length > 0 ? counselors[0].id : '',
-            notes: ''
-        });
-
-        const handleChange = (e) => {
-            const { name, value } = e.target;
-            setBookingData(prev => ({...prev, [name]: value}));
-        };
-
-        const handleSubmit = async (e) => {
-            e.preventDefault();
-            if (!bookingData.counselorId) {
-                showAlert('请选择一位咨询师。');
-                return;
-            }
-            try {
-                const response = await fetch('/api/client/request_appointment', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        ...bookingData,
-                        clientId: clientProfile.id,
-                    }),
-                });
-                const data = await response.json();
-                if (!response.ok) throw new Error(data.message || '请求失败');
-                showAlert(data.message);
-                fetchData(); // Refresh appointments list
-            } catch (err) {
-                showAlert(`预约失败: ${err.message}`);
-            }
-        };
-
-        const confirmedAppointments = appointments.filter(a => a.status === 'confirmed');
-
-        return (
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-                <div className="bg-white p-6 rounded-lg shadow-md">
-                    <h2 className="text-2xl font-semibold text-gray-700 mb-4 border-b pb-3">预约新咨询</h2>
-                    <form onSubmit={handleSubmit} className="space-y-4">
-                        <div><label className="block text-sm font-medium">选择咨询师</label><select name="counselorId" value={bookingData.counselorId} onChange={handleChange} required className="w-full p-2 border rounded-md">{counselors.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</select></div>
-                        <div><label className="block text-sm font-medium">选择日期</label><input type="date" name="date" value={bookingData.date} onChange={handleChange} required className="w-full p-2 border rounded-md"/></div>
-                        <div><label className="block text-sm font-medium">选择时间</label><input type="time" name="time" value={bookingData.time} onChange={handleChange} required className="w-full p-2 border rounded-md" step="3600"/></div>
-                        <div><label className="block text-sm font-medium">选择地点</label><select name="location" value={bookingData.location} onChange={handleChange} required className="w-full p-2 border rounded-md"><option value="x1">咨询室 x1</option><option value="x2">咨询室 x2</option><option value="x3">咨询室 x3</option><option value="线上">线上</option></select></div>
-                        <div><label className="block text-sm font-medium">备注 (可选)</label><textarea name="notes" value={bookingData.notes} onChange={handleChange} rows="2" className="w-full p-2 border rounded-md" placeholder="可以简单说明您想讨论的主题..."></textarea></div>
-                        <button type="submit" className="w-full bg-blue-600 text-white py-2 rounded-md hover:bg-blue-700 font-semibold">发送预约请求</button>
-                    </form>
-                </div>
-                <div className="bg-white p-6 rounded-lg shadow-md">
-                    <h2 className="text-2xl font-semibold text-gray-700 mb-4 border-b pb-3">平台日程占用情况</h2>
-                    <div className="space-y-3 max-h-96 overflow-y-auto pr-2">
-                        {confirmedAppointments.length > 0 ? (
-                            confirmedAppointments.sort((a,b) => new Date(a.date) - new Date(b.date) || a.time.localeCompare(b.time)).map(appt => (
-                                <div key={appt.id} className="bg-gray-100 p-2 rounded">
-                                    <p className="font-semibold text-sm text-gray-700">{appt.date} {appt.time}</p>
-                                    <p className="text-xs text-gray-500">咨询师 {counselors.find(c => c.id === appt.counselorId)?.name} 在 {appt.location} 已被预约</p>
-                                </div>
-                            ))
-                        ) : (
-                            <p className="text-center text-gray-500 py-10">当前没有已确认的预约。</p>
-                        )}
-                    </div>
-                </div>
-            </div>
-        );
-    };
+    }
 
 
     // ================================================================================================
@@ -757,35 +592,27 @@
         useEffect(() => { setCounselorData(initialData) }, [initialData]);
 
         const handleUpdateClient = (updatedClientData, callback) => {
-            const newClients = [...counselorData.clients];
+            const newClients = [...counselorData.assigned_clients];
             const clientIndex = newClients.findIndex(c => c.id === updatedClientData.id);
 
             if (clientIndex > -1) {
                 newClients[clientIndex] = updatedClientData;
-            } else {
-                // This case happens when adding a new client
-                newClients.push(updatedClientData);
-            }
-            
-            const fullDataToSave = {
-                clients: newClients, // Send the full, updated client list
-            };
-            
-            setCounselorData(prev => ({...prev, clients: newClients}));
-            setSelectedClient(updatedClientData);
+                const fullDataToSave = {
+                    clients: newClients,
+                    appointments: counselorData.appointments,
+                };
+                
+                setCounselorData(prev => ({...prev, assigned_clients: newClients}));
+                setSelectedClient(updatedClientData);
 
-            fetch(`/api/data/counselor/${user.username}`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(fullDataToSave),
-            })
-            .then(res => res.json())
-            .then(data => { 
-                if(!data.message.includes("成功")) showAlert("保存失败"); 
-                else if(callback) callback(updatedClientData); 
-                fetchData(); // Refresh all data after successful save
-            })
-            .catch(err => showAlert("保存失败: " + err.message));
+                fetch(`/api/data/counselor/${user.username}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(fullDataToSave),
+                })
+                .then(res => { if(!res.ok) showAlert("保存失败"); else if(callback) callback(updatedClientData); })
+                .catch(err => showAlert("保存失败: " + err.message));
+            }
         };
 
         const handleUpdateAppointments = (appointmentData, isDelete = false) => {
@@ -798,10 +625,11 @@
                 if (existingIndex > -1) {
                     updatedAppointments[existingIndex] = appointmentData;
                 } else {
-                   updatedAppointments = [...updatedAppointments, {...appointmentData, id: `appt-${Date.now()}`, status: 'confirmed'}];
+                   updatedAppointments = [...updatedAppointments, {...appointmentData, id: `appt-${Date.now()}`}];
                 }
             }
             const fullDataToSave = {
+                clients: counselorData.assigned_clients,
                 appointments: updatedAppointments
             };
 
@@ -811,7 +639,7 @@
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(fullDataToSave),
-            }).then(res => { if(!res.ok) showAlert("日程保存失败"); else fetchData(); });
+            }).then(res => { if(!res.ok) showAlert("日程保存失败")});
         };
         
         const handleSaveSelfProfile = async (profileData) => {
@@ -833,6 +661,7 @@
             }
         };
 
+
         const handleSelectClient = (client) => { setSelectedClient(client); setActiveSection('clientDetail'); };
         
         const navItems = [
@@ -846,59 +675,48 @@
             if (!counselorData) {
                 return <div className="text-center p-10 text-gray-600 font-semibold">正在加载...</div>;
             }
-            const assignedClients = counselorData.clients.filter(client => {
-                const self = counselorData.counselors.find(c => c.username === user.username);
-                return self && self.assignedClientIds?.includes(client.id);
-            });
-
             switch (activeSection) {
             case 'clientManagement':
-                const self = counselorData.counselors.find(c => c.username === user.username);
                 return <ClientManagementSection 
-                          clients={assignedClients}
+                          clients={counselorData.assigned_clients}
                           onSelectClient={handleSelectClient} 
-                          onUpdateClient={handleUpdateClient}
                           isManagerView={false}
-                          showAlert={showAlert}
-                          counselorId={self?.id}
-                          fetchData={fetchData}
                        />;
             case 'counselorManagement':
                 return <CounselorManagementSection 
                           counselors={counselorData.counselors}
-                          clients={counselorData.clients} 
+                          clients={counselorData.assigned_clients} 
+                          unassignedClients={counselorData.unassigned_clients}
                           appointments={counselorData.appointments} 
                           currentUser={user}
                           onSaveProfile={handleSaveSelfProfile}
+                          fetchData={fetchData}
+                          showAlert={showAlert}
                           isManagerView={false}
                        />;
             case 'schedule':
                 return <ScheduleSection 
                           appointments={counselorData.appointments} 
-                          clients={counselorData.clients}  // Pass all clients
-                          counselors={counselorData.counselors} // Pass all counselors
+                          clients={counselorData.assigned_clients} 
+                          counselors={counselorData.counselors.filter(c => c.username === user.username)} 
                           onUpdateAppointments={handleUpdateAppointments}
-                          isManagerView={false}
-                          currentUser={user}
-                          fetchData={fetchData}
-                          showAlert={showAlert}
                        />;
             case 'clientDetail':
                 return selectedClient ? 
                        <ClientDetailView 
                           key={selectedClient.id + JSON.stringify(selectedClient.sessions)} 
                           client={selectedClient} 
-                          allClients={counselorData.clients} 
+                          allClients={counselorData.assigned_clients} 
                           onUpdateClient={handleUpdateClient} 
                           globalLoadingMessage={globalLoadingMessage}
                           setGlobalLoadingMessage={setGlobalLoadingMessage}
                           showAlert={showAlert}
                         /> : 
-                       <div className="text-center p-10 text-gray-500">请先从“来访者管理”页面选择一位来访者。</div>;
+                       <div className="text-center p-10 text-gray-500">请先从"来访者管理"页面选择一位来访者。</div>;
             case 'cbtApplication':
                 return <CBTSection showAlert={showAlert}/>;
             default:
-                return <ScheduleSection appointments={counselorData.appointments} clients={counselorData.clients} counselors={counselorData.counselors} onUpdateAppointments={handleUpdateAppointments} isManagerView={false} currentUser={user} fetchData={fetchData} showAlert={showAlert} />;
+                return <ScheduleSection appointments={counselorData.appointments} clients={counselorData.assigned_clients} counselors={counselorData.counselors} onUpdateAppointments={handleUpdateAppointments} />;
             }
         };
 
@@ -937,37 +755,23 @@
     // ====================================== SHARED COMPONENTS =======================================
     // ================================================================================================
 
-    const BindingCodeModal = ({ onVerify, onClose, showAlert }) => {
+    const BindingCodeModal = ({ client, onClose, onConfirm, showAlert }) => {
         const { useState } = React;
         const [code, setCode] = useState('');
-        const [isLoading, setIsLoading] = useState(false);
 
-        const handleVerify = async () => {
+        const handleConfirm = () => {
             if (!code || code.trim().length !== 6) {
                 showAlert('请输入一个6位数的添加口令。');
                 return;
             }
-            setIsLoading(true);
-            try {
-                const res = await fetch('/api/counselor/verify_client_code', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ binding_code: code.toUpperCase() })
-                });
-                const data = await res.json();
-                if (!res.ok) throw new Error(data.message || '验证失败');
-                onVerify(data); // Pass the matched client data
-            } catch(err) {
-                showAlert(`验证失败: ${err.message}`);
-                setIsLoading(false);
-            }
+            onConfirm(code.toUpperCase());
         };
 
         return (
             <div className="custom-modal-backdrop">
                 <div className="custom-modal-content">
                     <h3 className="text-xl font-semibold mb-2">添加来访者</h3>
-                    <p className="text-sm text-gray-600 mb-4">请输入来访者的6位添加口令以进行匹配。</p>
+                    <p className="text-sm text-gray-600 mb-4">请输入来访者 <span className="font-bold">{client.name}</span> 的6位添加口令以确认操作。</p>
                     <input 
                         type="text"
                         placeholder="添加口令"
@@ -975,21 +779,17 @@
                         value={code}
                         onChange={(e) => setCode(e.target.value)}
                         className="p-2 border rounded-md w-full text-center tracking-widest font-mono"
-                        disabled={isLoading}
                     />
                      <div className="flex justify-center items-center gap-4 mt-6">
-                        <button onClick={onClose} disabled={isLoading} className="px-6 py-2 bg-gray-200 hover:bg-gray-300 rounded-md border disabled:opacity-50">取消</button>
-                        <button onClick={handleVerify} disabled={isLoading} className="px-6 py-2 text-white bg-blue-600 hover:bg-blue-700 rounded-md disabled:opacity-50">
-                            {isLoading ? '验证中...' : '验证并添加'}
-                        </button>
+                        <button onClick={onClose} className="px-6 py-2 bg-gray-200 hover:bg-gray-300 rounded-md border">取消</button>
+                        <button onClick={handleConfirm} className="px-6 py-2 text-white bg-blue-600 hover:bg-blue-700 rounded-md">确认添加</button>
                     </div>
                 </div>
             </div>
         );
     };
     
-    // REQ 3: Updated Counselor Profile Edit Form
-    const CounselorSelfEditForm = ({ counselor, onSave, onCancel }) => {
+    const CounselorSelfEditForm = ({ counselor, onSave, onCancel, unassignedClients, currentUser, fetchData, showAlert }) => {
         const { useState } = React;
         const [formData, setFormData] = useState({
             name: counselor?.name || '',
@@ -999,26 +799,26 @@
             age: counselor?.age || '',
             gender: counselor?.gender || '未透露',
             university: counselor?.university || '',
-            statement: counselor?.statement || '',
-            photo_base64: counselor?.photo_base64 || null,
+            personalStatement: counselor?.personalStatement || '',
+            photo: counselor?.photo || ''
         });
+        const [photoFile, setPhotoFile] = useState(null);
 
         const handleChange = (e) => {
             const { name, value } = e.target;
             setFormData(prev => ({...prev, [name]: value}));
         };
-
-        const handlePhotoUpload = (e) => {
+        const handlePhotoChange = (e) => {
             const file = e.target.files[0];
             if (file) {
+                setPhotoFile(file);
                 const reader = new FileReader();
-                reader.onloadend = () => {
-                    setFormData(prev => ({ ...prev, photo_base64: reader.result }));
+                reader.onload = (ev) => {
+                    setFormData(prev => ({...prev, photo: ev.target.result}));
                 };
                 reader.readAsDataURL(file);
             }
         };
-
         const handleSubmit = (e) => {
             e.preventDefault();
             if (!formData.name.trim()) {
@@ -1027,29 +827,20 @@
             }
             onSave(formData);
         };
-
         return (
             <div className="bg-white p-6 rounded-lg shadow-md animate-fadeIn mt-8">
                 <h3 className="text-xl font-semibold text-gray-800 mb-4 border-b pb-3">编辑我的档案</h3>
                 <form onSubmit={handleSubmit} className="space-y-4 max-w-lg mx-auto">
-                     <div className="flex items-center gap-4">
-                        <img src={formData.photo_base64 || 'https://via.placeholder.com/100'} alt="Profile" className="w-24 h-24 rounded-full object-cover"/>
-                        <div>
-                            <label className="block text-sm font-medium">上传新照片</label>
-                            <input type="file" accept="image/*" onChange={handlePhotoUpload} className="text-xs file:mr-2 file:py-1 file:px-2 file:rounded-full file:border-0 file:text-xs file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100"/>
-                        </div>
-                    </div>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                        <div><label className="block text-sm font-medium">姓名 <span className="text-red-500">*</span></label><input type="text" name="name" value={formData.name} onChange={handleChange} required className="w-full p-2 border rounded-md" /></div>
-                        <div><label className="block text-sm font-medium">联系方式</label><input type="text" name="contactInfo" value={formData.contactInfo} onChange={handleChange} className="w-full p-2 border rounded-md" placeholder="例如：email@example.com"/></div>
-                        <div><label className="block text-sm font-medium">年龄</label><input type="number" name="age" value={formData.age} onChange={handleChange} className="w-full p-2 border rounded-md" /></div>
-                        <div><label className="block text-sm font-medium">性别</label><select name="gender" value={formData.gender} onChange={handleChange} className="w-full p-2 border rounded-md"><option>未透露</option><option>男</option><option>女</option><option>其他</option></select></div>
-                    </div>
-                    <div><label className="block text-sm font-medium">就读/毕业院校</label><input type="text" name="university" value={formData.university} onChange={handleChange} className="w-full p-2 border rounded-md" placeholder="例如：北京师范大学"/></div>
+                    <div><label className="block text-sm font-medium">姓名 <span className="text-red-500">*</span></label><input type="text" name="name" value={formData.name} onChange={handleChange} required className="w-full p-2 border rounded-md" /></div>
+                    <div><label className="block text-sm font-medium">年龄</label><input type="number" name="age" value={formData.age} onChange={handleChange} className="w-full p-2 border rounded-md" /></div>
+                    <div><label className="block text-sm font-medium">性别</label><select name="gender" value={formData.gender} onChange={handleChange} className="w-full p-2 border rounded-md"><option>未透露</option><option>男</option><option>女</option><option>其他</option></select></div>
+                    <div><label className="block text-sm font-medium">就读院校</label><input type="text" name="university" value={formData.university} onChange={handleChange} className="w-full p-2 border rounded-md" /></div>
+                    <div><label className="block text-sm font-medium">个人特点陈述</label><textarea name="personalStatement" value={formData.personalStatement} onChange={handleChange} rows="3" className="w-full p-2 border rounded-md" placeholder="如：善于共情、CBT专长等"></textarea></div>
+                    <div><label className="block text-sm font-medium">照片上传</label><input type="file" accept="image/*" onChange={handlePhotoChange} className="w-full p-2 border rounded-md" /></div>
+                    {formData.photo && <img src={formData.photo} alt="照片预览" className="w-24 h-24 object-cover rounded-full mt-2" />}
+                    <div><label className="block text-sm font-medium">联系方式</label><input type="text" name="contactInfo" value={formData.contactInfo} onChange={handleChange} className="w-full p-2 border rounded-md" placeholder="例如：email@example.com"/></div>
                     <div><label className="block text-sm font-medium">擅长咨询流派</label><input type="text" name="modality" value={formData.modality} onChange={handleChange} className="w-full p-2 border rounded-md" placeholder="例如：CBT, 精神动力学"/></div>
-                    <div><label className="block text-sm font-medium">个人陈述</label><textarea name="statement" value={formData.statement} onChange={handleChange} rows="3" className="w-full p-2 border rounded-md" placeholder="简单介绍一下自己，帮助来访者更好地了解您..."></textarea></div>
                     <div><label className="block text-sm font-medium">临床和学术背景</label><textarea name="clinicalBackground" value={formData.clinicalBackground} onChange={handleChange} rows="4" className="w-full p-2 border rounded-md" placeholder="例如：XX大学临床心理学硕士，XX医院实习经验"></textarea></div>
-                    
                     <div className="flex justify-end space-x-3 pt-4 border-t mt-6">
                         <button type="button" onClick={onCancel} className="px-4 py-2 bg-gray-200 hover:bg-gray-300 rounded-md border">取消</button>
                         <button type="submit" className="px-4 py-2 text-white bg-blue-600 hover:bg-blue-700 rounded-md flex items-center shadow-sm"><span className="mr-2">💾</span>保存档案</button>
@@ -1060,7 +851,7 @@
     };
 
 
-    const CounselorManagementSection = ({ counselors, clients, appointments, onUpdateCounselors, onDeleteCounselor, onSaveUser, currentUser, isManagerView, onSaveProfile }) => {
+    const CounselorManagementSection = ({ counselors, clients, appointments, onUpdateCounselors, onDeleteCounselor, onSaveUser, currentUser, isManagerView, onSaveProfile, unassignedClients, fetchData, showAlert }) => {
         const { useState, useMemo } = React;
         const [view, setView] = useState('list'); 
         const [counselorToEdit, setCounselorToEdit] = useState(null);
@@ -1071,15 +862,14 @@
             const currentMonth = new Date().getMonth();
             const currentYear = new Date().getFullYear();
             return counselors.map(counselor => {
-                const confirmedAppointments = appointments.filter(a => a.status === 'confirmed');
-                const monthlyHours = confirmedAppointments.filter(appt => {
+                const monthlyHours = appointments.filter(appt => {
                     if (!appt.date) return false;
                     const apptDate = new Date(appt.date);
                     return appt.counselorId === counselor.id &&
                            apptDate.getMonth() === currentMonth &&
                            apptDate.getFullYear() === currentYear;
                 }).length;
-                const totalHours = confirmedAppointments.filter(appt => appt.counselorId === counselor.id).length;
+                const totalHours = appointments.filter(appt => appt.counselorId === counselor.id).length;
                 return { ...counselor, monthlyHours, totalHours };
             });
         }, [counselors, appointments]);
@@ -1110,8 +900,6 @@
         
         const loggedInCounselor = !isManagerView ? counselorsWithHours.find(c => c.username === currentUser.username) : null;
         const otherCounselors = !isManagerView ? counselorsWithHours.filter(c => c.username !== currentUser.username) : counselorsWithHours;
-        const defaultAvatar = "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0iY3VycmVudENvbG9yIiBjbGFzcz0idy02IGgtNiI+PHBhdGggZmlsbC1ydWxlPSJldmVub2RkIiBkPSJNMTguMzg0IDE0LjgzM2ExLjk5MiAxLjk5MiAwIDAgMSAuMjMyIDEuOTI1bC0uMDE4LjA2NS0yLjY3IDEuOTI0YTEuMzg3IDEuMzg3IDAgMCAwLS41MiAxLjA3M2wwIC4wODQuMDA4LjE5MmMwIC4zOTQtLjE1Ni43NjktLjQzMyAxLjA0NmEuOTkuOTkgMCAwIDEtMS4wNDYuNDMzSDkuNDYyYS45OS45OSAwIDAgMS0xLjA0Ni0uNDMzIDEuNSAxLjUgMCAwIDEtLjQzMy0xLjA0NmwzLjMxLTEwLjYxMmExLjEyNSAxLjEyNSAwIDAgMSAxLjA1NC0uODI1aC4xNThjLjQ3OCAwIC45LjMxNCAxLjA1NC44MjVsMy4zMSAxMC42MTJjMCAuMzA0LjAxLjYwMi4wMzMuODg3bC4wMDYuMDYyYS44MzIuODMyIDAgMCAwIC4xOTQuNTM4IDEuNTIgMS41MiAwIDAgMCAuMjk4LjQxNmMyLjU0MS0xLjgzNCAzLjkxOC00Ljc4MyA0LjM2My03LjQ2MmEuNzUuNzUgMCAxIDAgMS40NjYtLjQzN0MxOS43MjUgMTIuNTQ0IDE4LjA4IDE2LjgxIDE1LjEyIDE5LjU5M2ExLjUgMS41IDAgMCAxLTEuNTY0LjQxSDkuNDYyYTEuNSAxLjUgMCAwIDEtMS41NjQtLjQxQzUuMjE4IDE2LjgxIDMuNTcgMTIuNTQ0IDMuMDMgOS45MDhhLjc1Ljc1IDAgMCAwLTEuNDY2LjQzN2MuNDQ1IDIuNzc5IDEuODI4IDUuNjI4IDQuMzY0IDcuNDYyYTEuNTIgMS41MiAwIDAgMCAuMjk4LS40MTYuODMyLjgzMiAwIDAgMCAuMTk0LS41MzhsLjAwNS0uMDYyYTEuNDkzIDEuNDkzIDAgMCAxIC4wMzQtLjg4N0w5LjE2IDUuMzA0YTEuODc1IDQuMjUgMCAwIDEgMy4xMS0yLjU1NGguMTU3YzEuNTkxIDAgMy4wMTUgMS4wMzYgMy41MiAyLjU1NGwzLjQzNyAxMS4wMmEuOTk5Ljk5OSAwIDAgMC0uNTItMS4wNzNsLTIuNjctMS45MjRhLjk5Mi45OTIgMCAwIDEtLjIzMi0xLjkyNWwuMDE4LS4wNjVjLjMyNy0uOTIzIDEuMjM0LTEuNDUgMi4yMzYtMS4xOTJsLjE1soy4wNzdjLjk2OC4yNDQgMS42MjggMS4xMTIgMS43MDcgMi4xMDlsLjAxLjE2WiIgY2xpcC1ydWxlPSJldmVub2RkIiAvPjwvc3ZnPg==";
-
 
         return (
             <div className="bg-white p-6 rounded-lg shadow-md animate-fadeIn">
@@ -1131,21 +919,22 @@
                                 setIsEditingSelf(false);
                             }}
                             onCancel={() => setIsEditingSelf(false)}
+                            unassignedClients={unassignedClients}
+                            currentUser={currentUser}
+                            fetchData={fetchData}
+                            showAlert={showAlert}
                         />
                      ) : (
                         <div className="bg-blue-50 border rounded-lg p-4">
                             <div className="flex justify-between items-start">
-                               <div className="flex gap-4 items-start">
-                                    <img src={loggedInCounselor.photo_base64 || defaultAvatar} alt={loggedInCounselor.name} className="w-24 h-24 rounded-full object-cover border-2 border-white shadow-md"/>
-                                    <div>
-                                        <div className="flex items-center gap-4">
-                                            <h3 className="text-xl font-bold text-blue-700">{loggedInCounselor.name}</h3>
-                                            <button onClick={() => setIsEditingSelf(true)} className="text-xs font-medium text-blue-600 hover:underline">(编辑)</button>
-                                        </div>
-                                        <p className="text-sm text-gray-600 mt-1">{loggedInCounselor.modality}</p>
-                                        {loggedInCounselor.contactInfo && <p className="text-sm text-gray-500 mt-2"><b>联系方式:</b> {loggedInCounselor.contactInfo}</p>}
-                                        {loggedInCounselor.statement && <p className="text-sm text-gray-600 mt-2 italic">"{loggedInCounselor.statement}"</p>}
+                               <div>
+                                    <div className="flex items-center gap-4">
+                                        <h3 className="text-xl font-bold text-blue-700">{loggedInCounselor.name}</h3>
+                                        <button onClick={() => setIsEditingSelf(true)} className="text-xs font-medium text-blue-600 hover:underline">(编辑)</button>
                                     </div>
+                                    <p className="text-sm text-gray-600 mt-1">{loggedInCounselor.modality}</p>
+                                    {loggedInCounselor.contactInfo && <p className="text-sm text-gray-500 mt-2"><b>联系方式:</b> {loggedInCounselor.contactInfo}</p>}
+                                    {loggedInCounselor.clinicalBackground && <p className="text-sm text-gray-500 mt-2 whitespace-pre-wrap">{loggedInCounselor.clinicalBackground}</p>}
                                </div>
                                <div className="text-right flex gap-4">
                                    <div><p className="text-sm text-gray-600">本月</p><p className="text-2xl font-bold text-blue-800">{loggedInCounselor.monthlyHours} <span className="text-base font-normal">小时</span></p></div>
@@ -1167,13 +956,10 @@
                             <div key={counselor.id} className="bg-gray-50 border rounded-lg p-4 flex flex-col">
                                 <div className="flex-grow">
                                     <div className="flex justify-between items-start">
-                                        <div className="flex gap-3 items-start">
-                                            <img src={counselor.photo_base64 || defaultAvatar} alt={counselor.name} className="w-16 h-16 rounded-full object-cover"/>
-                                            <div>
-                                                <h3 className="text-xl font-bold text-blue-700">{counselor.name}</h3>
-                                                <p className="text-sm text-gray-600 mt-1">{counselor.modality}</p>
-                                                <p className="text-xs text-gray-500 mt-1">用户名: {counselor.username}</p>
-                                            </div>
+                                        <div>
+                                            <h3 className="text-xl font-bold text-blue-700">{counselor.name}</h3>
+                                            <p className="text-sm text-gray-600 mt-1">{counselor.modality}</p>
+                                            <p className="text-xs text-gray-500 mt-1">用户名: {counselor.username}</p>
                                         </div>
                                         <div className="text-right flex gap-4">
                                             <div><p className="text-sm text-gray-600">本月</p><p className="text-2xl font-bold text-blue-800">{counselor.monthlyHours} <span className="text-base font-normal">小时</span></p></div>
@@ -1198,11 +984,12 @@
                         )
                     })}
                 </div>
-                 {counselors.length === 0 && isManagerView && <p className="text-center text-gray-500 py-8">暂无咨询师信息。点击“添加咨询师”开始。</p>}
+                 {counselors.length === 0 && isManagerView && <p className="text-center text-gray-500 py-8">暂无咨询师信息。点击"添加咨询师"开始。</p>}
             </div>
         );
     };
     
+    // This form is now only for managers to edit/add counselors
     const CounselorForm = ({ onSave, onCancel, counselorToEdit, allClients, isManagerView }) => {
         const { useState } = React;
         const [formData, setFormData] = useState({
@@ -1277,27 +1064,11 @@
         );
     };
 
-    const ScheduleSection = ({ appointments, clients, counselors, onUpdateAppointments, isManagerView, currentUser, fetchData, showAlert }) => {
+    const ScheduleSection = ({ appointments, clients, counselors, onUpdateAppointments }) => {
         const { useState } = React;
         const [view, setView] = useState('daily'); // 'daily', 'overview', 'form'
         const [appointmentToEdit, setAppointmentToEdit] = useState(null);
         
-        const handleRespondRequest = async (appointmentId, status) => {
-             try {
-                const res = await fetch('/api/counselor/respond_appointment', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ appointmentId, status, counselorUsername: currentUser.username })
-                });
-                const data = await res.json();
-                if (!res.ok) throw new Error(data.message || '操作失败');
-                showAlert(data.message);
-                fetchData();
-             } catch(err) {
-                showAlert(`操作失败: ${err.message}`);
-             }
-        };
-
         if (view === 'form') {
             return (
                 <AppointmentForm
@@ -1313,12 +1084,9 @@
                     appointmentToEdit={appointmentToEdit}
                     clients={clients}
                     counselors={counselors}
-                    isManagerView={isManagerView}
                 />
             )
         }
-        
-        const pendingAppointments = appointments.filter(a => a.status === 'pending' && (isManagerView || counselors.find(c => c.id === a.counselorId)?.username === currentUser.username));
 
         return (
             <div className="bg-white p-6 rounded-lg shadow-md animate-fadeIn">
@@ -1332,24 +1100,6 @@
                        <button onClick={() => { setAppointmentToEdit(null); setView('form');}} className="bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2 px-4 rounded-lg flex items-center shadow-sm"><span className="mr-2">➕</span>添加日程</button>
                    </div>
                 </div>
-
-                {!isManagerView && pendingAppointments.length > 0 && (
-                    <div className="mb-6">
-                        <h3 className="text-xl font-semibold text-yellow-700 mb-3">待处理请求 ({pendingAppointments.length})</h3>
-                        <div className="space-y-3">
-                        {pendingAppointments.map(appt => (
-                            <div key={appt.id} className="bg-yellow-50 border border-yellow-300 p-3 rounded-lg">
-                                <p className="font-semibold">{clients.find(c => c.id === appt.clientId)?.name} 请求在 {appt.date} {appt.time} 于 {appt.location} 进行咨询。</p>
-                                <div className="flex gap-2 mt-2">
-                                    <button onClick={() => handleRespondRequest(appt.id, 'confirmed')} className="text-xs bg-green-600 text-white font-bold py-1 px-3 rounded">接受</button>
-                                    <button onClick={() => handleRespondRequest(appt.id, 'rejected')} className="text-xs bg-red-600 text-white font-bold py-1 px-3 rounded">拒绝</button>
-                                </div>
-                                <p className="text-xs text-gray-500 mt-1">拒绝后，请通过客服联系来访者说明情况并协商新时间。</p>
-                            </div>
-                        ))}
-                        </div>
-                    </div>
-                )}
                 
                 {view === 'daily' && 
                     <ScheduleDailyView 
@@ -1405,23 +1155,14 @@
                         <td className="p-1">
                           <div className="time-slot">
                             {hourAppointments.length > 0 ? (
-                                hourAppointments.map(appointment => {
-                                    const statusMap = {
-                                        pending: { bgColor: 'bg-yellow-100', borderColor: 'border-yellow-500', textColor: 'text-yellow-800' },
-                                        confirmed: { bgColor: 'bg-blue-100', borderColor: 'border-blue-500', textColor: 'text-blue-800' },
-                                        rejected: { bgColor: 'bg-red-100', borderColor: 'border-red-500', textColor: 'text-red-800' },
-                                    };
-                                    const style = statusMap[appointment.status] || { bgColor: 'bg-gray-100', borderColor: 'border-gray-500', textColor: 'text-gray-800' };
-                                    return (
-                                    <div key={appointment.id} className={`${style.bgColor} ${style.borderColor} border-l-4 p-2 rounded-r-lg cursor-pointer hover:brightness-95`} onClick={() => onSelectAppointment(appointment)}>
-                                        <p className={`font-bold text-sm ${style.textColor}`}>{clients.find(c => c.id === appointment.clientId)?.name}</p>
+                                hourAppointments.map(appointment => (
+                                    <div key={appointment.id} className="bg-blue-100 border-l-4 border-blue-500 p-2 rounded-r-lg cursor-pointer hover:bg-blue-200" onClick={() => onSelectAppointment(appointment)}>
+                                        <p className="font-bold text-sm text-blue-800">{clients.find(c => c.id === appointment.clientId)?.name}</p>
                                         <p className="text-xs text-gray-600">咨询师: {counselors.find(c => c.id === appointment.counselorId)?.name}</p>
                                         {appointment.location && <p className="text-xs text-gray-600">地点: {appointment.location}</p>}
                                         {appointment.notes && <p className="text-xs text-gray-500 mt-1 italic">"{appointment.notes}"</p>}
-                                        {appointment.status !== 'confirmed' && <p className="text-xs font-bold mt-1 uppercase">{appointment.status}</p>}
                                     </div>
-                                    )
-                                })
+                                ))
                             ) : (<div className="h-10"></div>)}
                           </div>
                         </td>
@@ -1456,15 +1197,14 @@
 
     const ScheduleOverview = ({ appointments }) => {
         const { useMemo } = React;
-        const confirmedAppointments = appointments.filter(a => a.status === 'confirmed');
         const appointmentsByDate = useMemo(() => {
-            return confirmedAppointments.reduce((acc, appt) => {
+            return appointments.reduce((acc, appt) => {
                 if(appt.date) {
                     (acc[appt.date] = acc[appt.date] || []).push(appt);
                 }
                 return acc;
             }, {});
-        }, [confirmedAppointments]);
+        }, [appointments]);
 
         const renderMonth = (date) => {
             const year = date.getFullYear();
@@ -1521,8 +1261,8 @@
         return (
             <div>
                 <div className="flex justify-end gap-4 text-xs mb-2">
-                    <span><span className="font-bold text-blue-600">■</span> 单日确认咨询数</span>
-                    <span><span className="font-bold text-green-600">■</span> 在岗咨询师数</span>
+                    <span><span className="font-bold text-blue-600">■</span> 单日咨询数量</span>
+                    <span><span className="font-bold text-green-600">■</span> 在岗咨询师数量</span>
                 </div>
                 <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
                     {renderMonth(month1)}
@@ -1533,17 +1273,16 @@
         );
     };
     
-    const AppointmentForm = ({ onSave, onCancel, onDelete, appointmentToEdit, clients, counselors, isManagerView }) => {
+    const AppointmentForm = ({ onSave, onCancel, onDelete, appointmentToEdit, clients, counselors }) => {
         const { useState } = React;
         const [formData, setFormData] = useState({
             id: appointmentToEdit?.id || null,
             date: appointmentToEdit?.date || new Date().toISOString().split('T')[0],
             time: appointmentToEdit?.time || '09:00',
-            location: appointmentToEdit?.location || '线上',
+            location: appointmentToEdit?.location || '',
             clientId: appointmentToEdit?.clientId || (clients[0]?.id || ''),
             counselorId: appointmentToEdit?.counselorId || (counselors[0]?.id || ''),
             notes: appointmentToEdit?.notes || '',
-            status: appointmentToEdit?.status || 'confirmed'
         });
         
         const handleChange = (e) => {
@@ -1557,8 +1296,7 @@
                 alert('请选择来访者和咨询师');
                 return;
             }
-            // For managers/counselors, new appointments are auto-confirmed
-            onSave({...formData, status: appointmentToEdit?.status || 'confirmed'});
+            onSave(formData);
         };
         
         const handleDeleteClick = () => {
@@ -1576,11 +1314,10 @@
                 <form onSubmit={handleSubmit} className="space-y-4 max-w-lg mx-auto">
                     <div><label className="block text-sm font-medium">日期</label><input type="date" name="date" value={formData.date} onChange={handleChange} required className="w-full p-2 border rounded-md"/></div>
                     <div><label className="block text-sm font-medium">时间</label><input type="time" name="time" value={formData.time} onChange={handleChange} required className="w-full p-2 border rounded-md" step="3600"/></div>
-                    <div><label className="block text-sm font-medium">咨询地点</label><select name="location" value={formData.location} onChange={handleChange} required className="w-full p-2 border rounded-md"><option value="x1">咨询室 x1</option><option value="x2">咨询室 x2</option><option value="x3">咨询室 x3</option><option value="线上">线上</option></select></div>
+                    <div><label className="block text-sm font-medium">咨询地点</label><input type="text" name="location" value={formData.location} onChange={handleChange} placeholder="例如：咨询室 201 或 线上会议" className="w-full p-2 border rounded-md"/></div>
                     <div><label className="block text-sm font-medium">来访者</label><select name="clientId" value={formData.clientId} onChange={handleChange} required className="w-full p-2 border rounded-md">{clients && clients.length > 0 ? clients.map(c => <option key={c.id} value={c.id}>{c.name}</option>) : <option disabled>请先添加来访者</option>}</select></div>
                     <div><label className="block text-sm font-medium">咨询师</label><select name="counselorId" value={formData.counselorId} onChange={handleChange} required className="w-full p-2 border rounded-md">{counselors && counselors.length > 0 ? counselors.map(c => <option key={c.id} value={c.id}>{c.name}</option>) : <option disabled>请先添加咨询师</option>}</select></div>
                     <div><label className="block text-sm font-medium">备注</label><textarea name="notes" value={formData.notes} onChange={handleChange} rows="3" className="w-full p-2 border rounded-md"></textarea></div>
-                    {isManagerView && <div><label className="block text-sm font-medium">状态</label><select name="status" value={formData.status} onChange={handleChange} className="w-full p-2 border rounded-md"><option value="pending">待确认</option><option value="confirmed">已确认</option><option value="rejected">已拒绝</option></select></div>}
                     <div className="flex justify-between items-center pt-4 border-t mt-6">
                        {appointmentToEdit && <button type="button" onClick={handleDeleteClick} className="px-4 py-2 text-white bg-red-600 hover:bg-red-700 rounded-md shadow-sm">删除</button>}
                        <div className="flex-grow flex justify-end space-x-3">
@@ -1593,35 +1330,16 @@
         );
     };
 
-    const ClientManagementSection = ({ clients, onSelectClient, isManagerView, onUpdateClient, onDeleteClient, onSaveUser, selectedClient, onClientDetailBack, setGlobalLoadingMessage, showAlert, counselorId, fetchData }) => {
+    const ClientManagementSection = ({ clients, onSelectClient, isManagerView, onUpdateClient, onDeleteClient, onSaveUser, selectedClient, onClientDetailBack, setGlobalLoadingMessage, showAlert }) => {
         const { useState } = React;
         const [view, setView] = useState('list');
         const [searchTerm, setSearchTerm] = useState('');
         const [clientToEdit, setClientToEdit] = useState(null);
-        const [isBindingModalOpen, setIsBindingModalOpen] = useState(false);
-
-        const handleVerifySuccess = (matchedClient) => {
-            setClientToEdit(matchedClient);
-            setIsBindingModalOpen(false);
-            setView('form');
-        };
-
-        const handleSaveClient = (clientData) => {
-            const finalClientData = { ...clientData };
-            const isNewAssignment = !clients.some(c => c.id === clientData.id);
-
-            // If it's a new assignment, ensure the counselorId is added to the assigned list
-            if (isNewAssignment && !isManagerView) {
-                 if (!finalClientData.assignedCounselorIds) {
-                    finalClientData.assignedCounselorIds = [];
-                 }
-                 if (!finalClientData.assignedCounselorIds.includes(counselorId)) {
-                    finalClientData.assignedCounselorIds.push(counselorId);
-                 }
-            }
-            onUpdateClient(finalClientData);
-            setView('list');
-        };
+        const [showAddClientModal, setShowAddClientModal] = useState(false);
+        const [bindingCode, setBindingCode] = useState('');
+        const [bindingStep, setBindingStep] = useState(1); // 1: 输入口令，2: 填写信息
+        const [pendingClient, setPendingClient] = useState(null);
+        const [addClientForm, setAddClientForm] = useState({ name: '', age: '', gender: '未透露' });
 
         if (selectedClient && isManagerView) {
             return <ClientDetailView 
@@ -1640,7 +1358,22 @@
         if (view === 'form') {
             return (
                 <ClientForm 
-                    onSave={handleSaveClient}
+                    onSave={(clientData, password) => {
+                        const isNew = !clientToEdit;
+                        const finalClientData = { ...clientData };
+                        if(isNew) {
+                            finalClientData.id = `client-${Date.now()}`;
+                            finalClientData.sessions = [];
+                            finalClientData.joinDate = new Date().toISOString().split('T')[0];
+                        } else {
+                            finalClientData.id = clientToEdit.id;
+                        }
+                        onUpdateClient(finalClientData);
+                        if(isManagerView && password) {
+                           onSaveUser(clientData.username, password, 'client', isNew);
+                        }
+                        setView('list');
+                    }}
                     onCancel={() => setView('list')}
                     clientToEdit={clientToEdit}
                     allClients={clients}
@@ -1654,31 +1387,60 @@
         const title = isManagerView ? '来访者管理' : '我的来访者';
         
         return (
-            <>
-            {isBindingModalOpen && (
-                <BindingCodeModal
-                    onVerify={handleVerifySuccess}
-                    onClose={() => setIsBindingModalOpen(false)}
-                    showAlert={showAlert}
-                />
-            )}
             <div className="bg-white p-6 rounded-lg shadow-md animate-fadeIn">
                 <div className="flex justify-between items-center mb-6 pb-4 border-b">
                     <h2 className="text-2xl font-semibold text-gray-700 flex items-center"><span className="mr-3 text-2xl">👥</span>{title}</h2>
-                    <button onClick={() => isManagerView ? setView('form') : setIsBindingModalOpen(true) } className="bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2 px-4 rounded-lg flex items-center shadow-sm">
-                        <span className="mr-2">➕</span>添加新来访
-                    </button>
+                    {!isManagerView && (
+                        <button onClick={() => setShowAddClientModal(true)} className="bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2 px-4 rounded-lg flex items-center shadow-sm">
+                            <span className="mr-2">➕</span>添加来访者
+                        </button>
+                    )}
+                    {isManagerView && (
+                        <button onClick={() => { setClientToEdit(null); setView('form'); }} className="bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2 px-4 rounded-lg flex items-center shadow-sm">
+                            <span className="mr-2">➕</span>添加新来访
+                        </button>
+                    )}
                 </div>
+                {/* 添加来访者弹窗 */}
+                {showAddClientModal && (
+                    <div className="custom-modal-backdrop animate-fadeIn" onClick={() => { setShowAddClientModal(false); setBindingStep(1); setBindingCode(''); setAddClientForm({ name: '', age: '', gender: '未透露' }); setPendingClient(null); }}>
+                        <div className="custom-modal-content" onClick={e => e.stopPropagation()}>
+                            {bindingStep === 1 ? (
+                                <>
+                                    <h3 className="text-lg font-bold mb-2">添加来访者</h3>
+                                    <p className="text-sm text-gray-600 mb-4">请输入来访者提供的6位绑定口令</p>
+                                    <input type="text" maxLength="6" value={bindingCode} onChange={e => setBindingCode(e.target.value)} className="w-full p-2 border rounded-md text-center tracking-widest font-mono" />
+                                    <div className="flex justify-end gap-2 mt-6">
+                                        <button onClick={() => setShowAddClientModal(false)} className="px-4 py-2 bg-gray-200 hover:bg-gray-300 rounded-md border">取消</button>
+                                        <button onClick={handleBindingCodeSubmit} className="px-4 py-2 text-white bg-blue-600 hover:bg-blue-700 rounded-md">下一步</button>
+                                    </div>
+                                </>
+                            ) : (
+                                <>
+                                    <h3 className="text-lg font-bold mb-2">填写来访者信息</h3>
+                                    <div className="space-y-3">
+                                        <div><label className="block text-sm font-medium">姓名 <span className="text-red-500">*</span></label><input type="text" value={addClientForm.name} onChange={e => setAddClientForm(f => ({ ...f, name: e.target.value }))} className="w-full p-2 border rounded-md" /></div>
+                                        <div><label className="block text-sm font-medium">年龄 <span className="text-red-500">*</span></label><input type="number" value={addClientForm.age} onChange={e => setAddClientForm(f => ({ ...f, age: e.target.value }))} className="w-full p-2 border rounded-md" /></div>
+                                        <div><label className="block text-sm font-medium">性别</label><select value={addClientForm.gender} onChange={e => setAddClientForm(f => ({ ...f, gender: e.target.value }))} className="w-full p-2 border rounded-md"><option>未透露</option><option>男</option><option>女</option><option>其他</option></select></div>
+                                    </div>
+                                    <div className="flex justify-end gap-2 mt-6">
+                                        <button onClick={() => { setBindingStep(1); setAddClientForm({ name: '', age: '', gender: '未透露' }); setPendingClient(null); }} className="px-4 py-2 bg-gray-200 hover:bg-gray-300 rounded-md border">上一步</button>
+                                        <button onClick={handleAddClientInfoSubmit} className="px-4 py-2 text-white bg-blue-600 hover:bg-blue-700 rounded-md">提交</button>
+                                    </div>
+                                </>
+                            )}
+                        </div>
+                    </div>
+                )}
                 <input type="text" placeholder="搜索来访者姓名..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="w-full p-3 mb-4 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"/>
                 {filteredClients.length > 0 ? (
                     <ul className="space-y-3">{filteredClients.map(client => (<li key={client.id} onClick={() => onSelectClient(client)} className="bg-gray-50 hover:bg-blue-50 border rounded-lg p-4 cursor-pointer flex justify-between items-center transition-all duration-200 hover:shadow-md"><div><p className="text-lg font-medium text-blue-700">{client.name} <span className="text-sm text-gray-500">({client.gender}, {client.age}岁)</span></p><p className="text-sm text-gray-600">加入日期: {client.joinDate}</p></div><span className="text-gray-400 font-bold">❯</span></li>))}</ul>
-                ) : <p className="text-center text-gray-500 py-8">暂无匹配的来访者。{isManagerView ? '点击“添加新来访”开始。' : '您目前没有负责的来访者, 点击按钮通过口令添加。'}</p>}
+                ) : <p className="text-center text-gray-500 py-8">暂无匹配的来访者。{isManagerView ? '点击"添加新来访"开始。' : '您目前没有负责的来访者。'}</p>}
             </div>
-            </>
         );
     };
 
-    const ClientForm = ({ onSave, onCancel, clientToEdit, allClients, isManagerView }) => {
+    const ClientForm = ({ onSave, onCancel, clientToEdit, allClients, isManagerView, isSubmitting }) => {
       const { useState } = React;
       const [formData, setFormData] = useState({
         name: clientToEdit?.name || '', age: clientToEdit?.age || '', gender: clientToEdit?.gender || '未透露',
@@ -1696,9 +1458,9 @@
       const handleSubmit = (e) => {
         e.preventDefault(); 
         if (!formData.name.trim() || !formData.age) { alert('姓名和年龄为必填项。'); return; }
-        if (isManagerView && !clientToEdit && !formData.username.trim()) { alert('必须为新来访者设置一个用户名。'); return; }
+        if (isManagerView && !formData.username.trim()) { alert('必须为来访者设置一个用户名。'); return; }
         
-        const clientData = { ...clientToEdit, ...formData, age: parseInt(formData.age), referredBy: formData.referredBy || null };
+        const clientData = { ...formData, age: parseInt(formData.age), referredBy: formData.referredBy || null };
         onSave(clientData, password);
       };
       
@@ -1707,7 +1469,7 @@
       return (
         <div className="bg-white p-6 rounded-lg shadow-md animate-fadeIn">
             <div className="flex justify-between items-center mb-6 pb-4 border-b">
-                <h3 className="text-2xl font-semibold text-gray-700">{clientToEdit && !isManagerView ? '确认并编辑来访者信息' : (clientToEdit ? '编辑' : '添加')+'来访者信息'}</h3>
+                <h3 className="text-2xl font-semibold text-gray-700">{clientToEdit ? '编辑' : '添加'}来访者信息</h3>
                 <button onClick={onCancel} className="text-sm font-medium text-gray-600 hover:text-gray-900">← 返回</button>
             </div>
             <form onSubmit={handleSubmit} className="space-y-4">
@@ -1733,8 +1495,8 @@
               </div>
               <div className="flex justify-end space-x-3 pt-4 border-t mt-6">
                   <button type="button" onClick={onCancel} className="px-4 py-2 bg-gray-200 hover:bg-gray-300 rounded-md border">取消</button>
-                  <button type="submit" className="px-4 py-2 text-white bg-blue-600 hover:bg-blue-700 rounded-md flex items-center shadow-sm">
-                    <span className="mr-2">💾</span>{clientToEdit ? '保存更改' : '添加来访者'}
+                  <button type="submit" className="px-4 py-2 text-white bg-blue-600 hover:bg-blue-700 rounded-md flex items-center shadow-sm" disabled={isSubmitting}>
+                    <span className="mr-2">💾</span>{isSubmitting ? '提交中...' : (clientToEdit ? '保存更改' : '添加来访者')}
                   </button>
               </div>
             </form>
@@ -1763,8 +1525,7 @@
         <div className="bg-white p-6 rounded-lg shadow-md animate-fadeIn">
           <div className="flex flex-col md:flex-row justify-between md:items-center mb-4 pb-4 border-b gap-4">
             <div className="flex items-center">
-              {!isManagerView && <button onClick={() => window.history.back()} className="text-sm font-medium text-gray-600 hover:text-gray-900 mr-4">← 返回列表</button>}
-              {isManagerView && onBack && <button onClick={onBack} className="text-sm font-medium text-gray-600 hover:text-gray-900 mr-4">← 返回列表</button>}
+              {isManagerView && <button onClick={onBack} className="text-sm font-medium text-gray-600 hover:text-gray-900 mr-4">← 返回列表</button>}
               <h2 className="text-2xl font-semibold text-gray-700 flex items-center"><span className="mr-3 text-3xl">👤</span>{client.name} - 档案中心</h2>
             </div>
             <div>
@@ -1813,24 +1574,14 @@
                     })
                 ]);
 
-                if (!conceptualizationRes.ok) {
-                    const errData = await conceptualizationRes.json();
-                    throw new Error(`个案概念化失败: ${errData.error || conceptualizationRes.statusText}`);
-                }
-                if (!assessmentRes.ok) {
-                    const errData = await assessmentRes.json();
-                    throw new Error(`来访者评估失败: ${errData.error || assessmentRes.statusText}`);
-                }
+                if (!conceptualizationRes.ok || !assessmentRes.ok) throw new Error("AI API 调用失败");
 
                 const conceptualization = await conceptualizationRes.json();
                 const assessment = await assessmentRes.json();
-                
-                if(conceptualization.status === 'Error' || assessment.status === 'Error'){
-                    throw new Error(`AI报告生成包含错误: \n概念化: ${conceptualization.error || 'OK'}\n评估: ${assessment.error || 'OK'}`);
-                }
 
                 const updatedClient = JSON.parse(JSON.stringify(currentClient));
                 const sIndex = updatedClient.sessions.findIndex(s => s.id === sessionId);
+                // [BUG FIX] Corrected undefined variable 'content' to 'transcriptContent'
                 updatedClient.sessions[sIndex].transcript = { name: transcriptName, content: transcriptContent };
                 updatedClient.sessions[sIndex].conceptualization = conceptualization;
                 updatedClient.sessions[sIndex].assessment = assessment;
@@ -1852,4 +1603,253 @@
         onUpdateClient({ ...client, sessions: [...(client.sessions || []), newSession] });
       };
 
-      const handle
+      const handleFileUpload = async (sessionId, file) => {
+        try {
+            const content = await readFileAsText(file);
+            const sessionIndex = client.sessions.findIndex(s => s.id === sessionId);
+            if (sessionIndex === -1) return;
+            
+            let updatedClient = JSON.parse(JSON.stringify(client));
+            updatedClient.sessions[sessionIndex].transcript = { name: file.name, content: content };
+            
+            // First, update the state to show the file is uploaded
+            onUpdateClient(updatedClient, (nextClientState) => {
+              // Then, trigger the AI generation with the most recent client state
+              triggerAiGeneration(nextClientState, sessionId, content, file.name);
+            });
+
+        } catch(e) {
+            showAlert(`读取文件失败: ${e.message}`);
+        }
+      };
+
+      const handleSupervisionFileUploaded = async (sessionId, fileType, file) => {
+          try {
+              const fileContent = await readFileAsText(file);
+              const sessionIndex = client.sessions.findIndex(s => s.id === sessionId);
+              if (sessionIndex === -1) return;
+
+              let updatedClient = JSON.parse(JSON.stringify(client));
+              updatedClient.sessions[sessionIndex].supervision[fileType + 'Uploaded'] = { name: file.name, content: fileContent };
+
+              onUpdateClient(updatedClient, (nextClientState) => {
+                const finalSession = nextClientState.sessions.find(s => s.id === sessionId);
+                if (finalSession.supervision.conceptualizationUploaded && finalSession.supervision.assessmentUploaded && finalSession.supervision.status !== 'Complete' && finalSession.supervision.status !== 'Processing') {
+                    triggerSupervisionGeneration(nextClientState, sessionId);
+                }
+              });
+
+          } catch (e) {
+              showAlert(`读取督导文件失败: ${e.message}`);
+          }
+      };
+      
+      const triggerSupervisionGeneration = async (clientForSupervision, sessionId) => {
+          setGlobalLoadingMessage(`正在为 ${clientForSupervision.name} 生成最终督导报告...`);
+          const session = clientForSupervision.sessions.find(s => s.id === sessionId);
+          if (!session) return;
+
+          try {
+              const clientInfoForPrompt = { ...clientForSupervision };
+              delete clientInfoForPrompt.sessions;
+
+              const response = await fetch('/api/ai/supervision', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    client_info: clientInfoForPrompt,
+                    transcript_content: session.transcript.content,
+                    conceptualization_content: session.supervision.conceptualizationUploaded.content,
+                    assessment_content: session.supervision.assessmentUploaded.content
+                })
+              });
+
+              if (!response.ok) throw new Error("AI督导报告生成失败");
+
+              const supervisionData = await response.json();
+              
+              const finalClient = JSON.parse(JSON.stringify(clientForSupervision));
+              const sIndex = finalClient.sessions.findIndex(s => s.id === sessionId);
+              finalClient.sessions[sIndex].supervision = { ...finalClient.sessions[sIndex].supervision, ...supervisionData.supervision };
+              onUpdateClient(finalClient, () => {
+                showAlert('AI督导报告已成功生成！');
+              });
+          } catch(error) {
+              showAlert(`AI督导报告生成失败: ${error.message}`);
+          } finally {
+              setGlobalLoadingMessage('');
+          }
+      };
+
+        const renderTabContent = () => {
+            const isLoading = !!globalLoadingMessage;
+            switch (activeTab) {
+            case 'profile': return <ClientProfileTab client={client} allClients={allClients} onAddSession={handleAddSession} onFileUpload={handleFileUpload} isAiLoading={isLoading} />;
+            case 'conceptualization': return <ReportDisplayTab client={client} reportType="conceptualization" title="AI个案概念化" themeColor="indigo" />;
+            case 'analysis': return <ReportDisplayTab client={client} reportType="assessment" title="来访者评估" themeColor="green" />;
+            case 'supervision': return <SupervisionReportTab client={client} onSupervisionFileUploaded={handleSupervisionFileUploaded} isAiLoading={isLoading} />;
+            default: return null;
+            }
+        };
+
+        return (
+            <div>
+                 <div className="border-b border-gray-200"><nav className="-mb-px flex space-x-6 overflow-x-auto">{tabs.map(tab => <button key={tab.id} onClick={() => setActiveTab(tab.id)} className={`flex-shrink-0 whitespace-nowrap py-3 px-1 border-b-2 font-medium text-sm flex items-center ${activeTab === tab.id ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'}`}><span className="mr-2">{tab.icon}</span>{tab.label}</button>)}</nav></div>
+                <div className="pt-6">{renderTabContent()}</div>
+            </div>
+        )
+    }
+
+    const ClientProfileTab = ({ client, allClients, onAddSession, onFileUpload, isAiLoading }) => {
+      const { useState, useRef } = React;
+      const [showAddSession, setShowAddSession] = useState(false);
+      const [newSessionDate, setNewSessionDate] = useState(new Date().toISOString().split('T')[0]);
+      const handleCreateSession = () => { if (!newSessionDate) return; onAddSession({ date: newSessionDate, summary: `关于 ${newSessionDate} 的咨询` }); setShowAddSession(false); };
+      
+      const SessionCard = ({ session }) => {
+        const fileInputRef = useRef(null);
+        const status = session.conceptualization?.status;
+        const colorMap = { Pending: 'yellow', Processing: 'blue', Complete: 'green', Error: 'red' };
+        const statusColor = colorMap[status] || 'gray';
+
+        const handleFileSelect = (event) => {
+            const file = event.target.files[0];
+            if (file) onFileUpload(session.id, file);
+        };
+        return (
+            <div className={`p-4 bg-white rounded-lg border border-gray-200 shadow-sm transition-all ${status === 'Processing' && 'animate-pulse'}`}>
+                <div className="flex justify-between items-start">
+                    <p className="font-semibold text-gray-800">咨询日期: {session.date}</p>
+                    {session.transcript && <div className={`text-xs font-medium px-2 py-0.5 rounded-full bg-${statusColor}-100 text-${statusColor}-800`}>报告状态: {status}</div>}
+                </div>
+                <div className="mt-3 p-3 bg-gray-50 rounded-md text-center">
+                    <p className="text-sm font-medium text-gray-600">咨询逐字稿</p>
+                    {session.transcript ? (<div className="text-green-600 mt-1 flex items-center justify-center gap-2"><span className="text-xl">✅</span><p className="text-xs break-all font-mono">{session.transcript.name}</p></div>) : (
+                        <>
+                            <input type="file" ref={fileInputRef} onChange={handleFileSelect} className="hidden" accept=".txt,.md"/>
+                            <button onClick={() => fileInputRef.current.click()} disabled={isAiLoading} className="mt-1 text-xs bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-1 px-3 rounded shadow-sm disabled:opacity-50 disabled:cursor-not-allowed">上传并生成AI报告</button>
+                        </>
+                    )}
+                </div>
+            </div>
+        );
+      }
+      const referrer = client.referredBy && allClients ? allClients.find(c => c.id === client.referredBy) : null;
+      const referredList = client.referredClients && allClients ? client.referredClients.map(id => allClients.find(c => c.id === id)).filter(Boolean) : [];
+      return (
+        <div className="space-y-6">
+            <div className="p-4 bg-gray-50 rounded-lg border">
+                <h3 className="text-lg font-semibold text-gray-700 mb-3 flex items-center"><span className="mr-2">ℹ️</span>基本信息</h3>
+                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-x-6 gap-y-4 text-sm">
+                    <p><strong>姓名:</strong> {client.name}</p><p><strong>年龄:</strong> {client.age} 岁</p><p><strong>性别:</strong> {client.gender}</p>
+                    <p><strong>职业/年级:</strong> {client.grade || '未提供'}</p><p><strong>性取向:</strong> {client.sexualOrientation || '未提供'}</p><p><strong>联系方式:</strong> {client.contact || '未提供'}</p>
+                    <p><strong>转介绍来源:</strong> {referrer ? referrer.name : '无'}</p><p><strong>已转介绍:</strong> {referredList?.length > 0 ? referredList.map(c => c.name).join(', ') : '无'}</p><p><strong>心理状态评分:</strong> {client.mentalStateScore}/10</p>
+                    <p className="md:col-span-3"><strong>既往病史:</strong> {client.historyOfIllness || '未提供'}</p>
+                    <p className="md:col-span-3"><strong>残障情况:</strong> {client.disabilityStatus || '未提供'}</p>
+                    <p><strong>宗教信仰:</strong> {client.religiousBelief || '未提供'}</p><p><strong>种族认同:</strong> {client.ethnicIdentity || '未提供'}</p>
+                    <p><strong>个人经济:</strong> {client.personalFinance || '未提供'}</p><p><strong>家庭经济:</strong> {client.familyFinance || '未提供'}</p>
+                </div>
+            </div>
+            <div>
+                <div className="flex justify-between items-center mb-3"><h3 className="text-lg font-semibold text-gray-700 flex items-center"><span className="mr-2">📅</span>咨询会话工作流</h3><button onClick={() => setShowAddSession(true)} className="text-sm bg-blue-600 hover:bg-blue-700 text-white font-semibold py-1 px-3 rounded-md shadow-sm">添加新会话</button></div>
+                {showAddSession && (<div className="p-4 mb-4 bg-blue-50 border rounded-lg flex items-center gap-4 animate-fadeIn"><input type="date" value={newSessionDate} onChange={e => setNewSessionDate(e.target.value)} className="p-2 border rounded-md"/><button onClick={handleCreateSession} className="bg-blue-500 hover:bg-blue-600 text-white py-2 px-4 rounded-md shadow-sm">创建</button><button onClick={() => setShowAddSession(false)} className="text-gray-600">取消</button></div>)}
+                <div className="space-y-4">{client.sessions?.length > 0 ? [...client.sessions].reverse().map(session => <SessionCard key={session.id} session={session} />) : <p className="text-center text-gray-500 py-4">暂无咨询会话记录。</p>}</div>
+            </div>
+        </div>
+      );
+    };
+    
+    const downloadTextAsFile = (text, filename) => {
+        const blob = new Blob([text], {type: 'text/plain;charset=utf-8'});
+        const href = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = href;
+        link.download = filename;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(href);
+    };
+
+    const ReportDisplayTab = ({ client, reportType, title, themeColor }) => {
+        const { useState, useEffect } = React;
+        const aiSessions = (client.sessions || []).filter(s => s[reportType] && s[reportType].status !== 'Pending');
+        const [selectedSession, setSelectedSession] = useState(aiSessions.length > 0 ? aiSessions.slice().reverse()[0] : null);
+        
+        useEffect(() => {
+            const sessions = (client.sessions || []).filter(s => s[reportType]?.status !== 'Pending');
+            if (sessions.length > 0 && !sessions.some(s => s.id === selectedSession?.id)) {
+                setSelectedSession(sessions.slice().reverse()[0]);
+            } else if (sessions.length === 0) {
+                setSelectedSession(null);
+            }
+        }, [client, reportType, selectedSession]);
+
+        const report = selectedSession ? selectedSession[reportType] : null;
+
+        return (
+             <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                <div className="md:col-span-1 bg-gray-50 p-4 rounded-lg border"><h3 className="text-lg font-medium text-gray-700 mb-3">历史记录</h3><ul className="space-y-2 max-h-[60vh] overflow-y-auto pr-2">{aiSessions.length === 0 ? <p className="text-sm text-gray-500 text-center py-4">暂无记录。</p> : [...aiSessions].reverse().map(session => <li key={session.id} onClick={() => setSelectedSession(session)} className={`p-3 rounded-lg cursor-pointer border-2 ${selectedSession?.id === session.id ? `bg-${themeColor}-100 border-${themeColor}-500` : `bg-white hover:bg-gray-100 border-transparent`}`}><p className={`font-semibold text-${themeColor}-600`}>咨询日期: {session.date}</p><p className={`text-xs font-medium mt-1 text-${session[reportType].status === 'Complete' ? 'green-600' : 'red-600'}`}>状态: {session[reportType].status}</p></li>)}</ul></div>
+                <div className="md:col-span-2"><h3 className="text-lg font-medium mb-3 text-gray-700">{title}详情</h3>{report ? <div className="p-4 bg-white border rounded-lg h-full"><div className="flex justify-between items-center mb-2"><h4 className={`font-bold text-lg text-${themeColor}-700`}>关于 {selectedSession.date} 咨询的{title}</h4><button onClick={()=>downloadTextAsFile(report.content, `${client.name}_${selectedSession.date}_${reportType}.txt`)} className="text-xs bg-gray-600 text-white py-1 px-2 rounded hover:bg-gray-700">下载</button></div><div className="whitespace-pre-wrap text-gray-800 bg-gray-50 p-3 mt-3 rounded-md overflow-y-auto max-h-[55vh]">{report.error ? <span className="text-red-600">{report.error}</span> : report.content}</div></div> : <p className="text-gray-500 text-center pt-10">请从左侧选择记录查看。</p>}</div>
+            </div>
+        );
+    }
+
+    const SupervisionReportTab = ({ client, onSupervisionFileUploaded, isAiLoading }) => {
+        const { useState, useEffect, useRef } = React;
+        const eligibleSessions = (client.sessions || []).filter(s => s.transcript);
+        const [selectedSession, setSelectedSession] = useState(eligibleSessions.length > 0 ? eligibleSessions.slice().reverse()[0] : null);
+        useEffect(() => { const sessions = (client.sessions || []).filter(s => s.transcript); setSelectedSession(sessions.length > 0 ? sessions.slice().reverse()[0] : null); }, [client]);
+        
+        const SupervisionWorkflow = ({ session }) => {
+            const conceptualizationInputRef = useRef(null);
+            const assessmentInputRef = useRef(null);
+            const handleFileSelect = (event, fileType) => {
+                const file = event.target.files[0];
+                if(file) onSupervisionFileUploaded(session.id, fileType, file);
+            }
+            const isReadyForGeneration = session.supervision.conceptualizationUploaded && session.supervision.assessmentUploaded;
+
+            return (
+                <div className="p-4 bg-white border rounded-lg h-full space-y-4">
+                    <div className="p-3 bg-gray-50 rounded-md">
+                        <h4 className="text-md font-medium text-gray-700 mb-2">第1步: 上传已生成的报告（用于督导）</h4>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div><p className="text-sm text-center mb-1">个案概念化报告</p><button onClick={() => conceptualizationInputRef.current.click()} disabled={session.supervision.conceptualizationUploaded || session.conceptualization?.status !== 'Complete'} className="w-full text-xs bg-indigo-500 text-white py-1 px-2 rounded disabled:bg-gray-400 disabled:cursor-not-allowed">{session.supervision.conceptualizationUploaded ? `✅ 已上传` : '上传 .txt 文件'}</button><input type="file" ref={conceptualizationInputRef} onChange={(e) => handleFileSelect(e, 'conceptualization')} className="hidden" accept=".txt"/></div>
+                            <div><p className="text-sm text-center mb-1">来访者评估报告</p><button onClick={() => assessmentInputRef.current.click()} disabled={session.supervision.assessmentUploaded || session.assessment?.status !== 'Complete'} className="w-full text-xs bg-indigo-500 text-white py-1 px-2 rounded disabled:bg-gray-400 disabled:cursor-not-allowed">{session.supervision.assessmentUploaded ? `✅ 已上传` : '上传 .txt 文件'}</button><input type="file" ref={assessmentInputRef} onChange={(e) => handleFileSelect(e, 'assessment')} className="hidden" accept=".txt"/></div>
+                        </div>
+                        <p className="text-xs text-gray-500 mt-2">提示：请先确保初步报告已生成(状态为Complete)。上传两份报告后将自动触发最终督导报告生成。</p>
+                    </div>
+                    <div className="p-3 bg-gray-50 rounded-md">
+                        <h4 className="text-md font-medium text-gray-700 mb-2">第2步: 查看最终督导报告</h4>
+                        {session.supervision.status === 'Processing' && <p className="text-sm text-blue-600 animate-pulse">正在生成中...</p>}
+                        {session.supervision.status === 'Complete' ? <button onClick={()=>downloadTextAsFile(session.supervision.content, `${client.name}_${selectedSession.date}_督导报告.txt`)} className="text-sm bg-green-600 hover:bg-green-700 text-white font-semibold py-2 px-4 rounded shadow-sm">下载督导报告</button> : <p className="text-sm text-gray-500">状态: {session.supervision.status === 'Pending' ? '待上传文件' : session.supervision.status}</p>}
+                        {session.supervision.status === 'Error' && <p className="text-sm text-red-600">{session.supervision.content}</p>}
+                    </div>
+                </div>
+            );
+        };
+        return (
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                <div className="md:col-span-1 bg-gray-50 p-4 rounded-lg border"><h3 className="text-lg font-medium text-gray-700 mb-3">会话列表</h3><ul className="space-y-2 max-h-[60vh] overflow-y-auto pr-2">{eligibleSessions.length === 0 ? <p className="text-sm text-gray-500 text-center py-4">暂无符合条件的会话。</p> : [...eligibleSessions].reverse().map(session => <li key={session.id} onClick={() => setSelectedSession(session)} className={`p-3 rounded-lg cursor-pointer border-2 ${selectedSession?.id === session.id ? 'bg-blue-100 border-blue-500' : 'bg-white hover:bg-gray-100 border-transparent'}`}><p className="font-semibold text-blue-600">咨询日期: {session.date}</p><p className={`text-xs font-medium mt-1 ${session.supervision.status === 'Complete' ? 'text-green-600' : 'text-yellow-600'}`}>督导状态: {session.supervision.status}</p></li>)}</ul></div>
+                <div className="md:col-span-2"><h3 className="text-lg font-medium mb-3 text-gray-700">AI督导工作流</h3>{selectedSession ? <SupervisionWorkflow session={selectedSession}/> : <p className="text-gray-500 text-center pt-10">请从左侧选择一个会话以开始督导流程。</p>}</div>
+            </div>
+        );
+    };
+
+    const CBTSection = ({ showAlert }) => {
+      return (
+          <div className="bg-white p-6 rounded-lg shadow-md animate-fadeIn max-w-4xl mx-auto">
+              <h2 className="text-2xl font-semibold mb-6 text-gray-700 border-b pb-3 flex items-center"><span className="text-2xl mr-3">🧠</span>辅助工具</h2>
+              <div className="text-center p-8 bg-gray-50 rounded-lg">
+                  <h3 className="text-xl font-bold text-gray-600">功能开发中</h3>
+                  <p className="mt-2 text-gray-500">此模块（如CBT练习工具）正在积极开发中，敬请期待未来的更新！</p>
+              </div>
+          </div>
+      );
+    };
+    
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
+              </html>
