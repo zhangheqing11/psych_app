@@ -20,7 +20,7 @@
       background-color: rgba(0, 0, 0, 0.6);
       display: flex; align-items: center; justify-content: center;
       z-index: 1000;
-}
+    }
     .custom-modal-content {
       background: white; padding: 2rem; border-radius: 0.75rem;
       box-shadow: 0 10px 25px rgba(0, 0, 0, 0.1);
@@ -342,7 +342,7 @@
         };
 
         const handleDeleteCounselor = (counselorId) => {
-            const counselorToDelete = allData.counselor_data.counselors.find(c => c.id !== counselorId);
+            const counselorToDelete = allData.counselor_data.counselors.find(c => c.id === counselorId);
             if(!counselorToDelete) return;
             if (allData.counselor_data.appointments.some(a => a.counselorId === counselorId)) {
                 return showAlert('无法删除该咨询师，其仍有关联的日程安排。');
@@ -409,6 +409,8 @@
                                 selectedClient={selectedClient}
                                 setGlobalLoadingMessage={setGlobalLoadingMessage}
                                 showAlert={showAlert}
+                                currentUser={user}
+                                fetchData={fetchData}
                             />;
                 case 'schedule':
                      return <ScheduleSection 
@@ -520,14 +522,7 @@
                         <div className="flex-grow w-full border-t sm:border-t-0 sm:border-l border-gray-200 pt-6 sm:pt-0 sm:pl-8">
                             <h2 className="text-2xl font-bold text-gray-800 mb-6">欢迎, {user.username}</h2>
                             
-                            <div className="mb-6">
-                                <h3 className="font-semibold text-gray-700">咨询师添加口令</h3>
-                                <p className="text-xs text-gray-500 mt-1">请将此口令提供给您的咨询师，以便他们将您添加到他们的档案中。请勿泄露给他人。</p>
-                                <div className="mt-2 bg-blue-50 text-blue-800 font-mono text-lg tracking-widest p-3 rounded-md text-center">
-                                    {/* [BUG FIX] Added check to prevent crash before clientProfile is loaded */}
-                                    {clientProfile && clientProfile.binding_code}
-                                </div>
-                            </div>
+                            {/* 口令功能已移除 - 不再需要显示绑定码 */}
 
                             <div>
                                 <h3 className="font-semibold text-gray-700">联系信息</h3>
@@ -681,6 +676,9 @@
                           clients={counselorData.assigned_clients}
                           onSelectClient={handleSelectClient} 
                           isManagerView={false}
+                          currentUser={user}
+                          showAlert={showAlert}
+                          fetchData={fetchData}
                        />;
             case 'counselorManagement':
                 return <CounselorManagementSection 
@@ -755,40 +753,6 @@
     // ====================================== SHARED COMPONENTS =======================================
     // ================================================================================================
 
-    const BindingCodeModal = ({ client, onClose, onConfirm, showAlert }) => {
-        const { useState } = React;
-        const [code, setCode] = useState('');
-
-        const handleConfirm = () => {
-            if (!code || code.trim().length !== 6) {
-                showAlert('请输入一个6位数的添加口令。');
-                return;
-            }
-            onConfirm(code.toUpperCase());
-        };
-
-        return (
-            <div className="custom-modal-backdrop">
-                <div className="custom-modal-content">
-                    <h3 className="text-xl font-semibold mb-2">添加来访者</h3>
-                    <p className="text-sm text-gray-600 mb-4">请输入来访者 <span className="font-bold">{client.name}</span> 的6位添加口令以确认操作。</p>
-                    <input 
-                        type="text"
-                        placeholder="添加口令"
-                        maxLength="6"
-                        value={code}
-                        onChange={(e) => setCode(e.target.value)}
-                        className="p-2 border rounded-md w-full text-center tracking-widest font-mono"
-                    />
-                     <div className="flex justify-center items-center gap-4 mt-6">
-                        <button onClick={onClose} className="px-6 py-2 bg-gray-200 hover:bg-gray-300 rounded-md border">取消</button>
-                        <button onClick={handleConfirm} className="px-6 py-2 text-white bg-blue-600 hover:bg-blue-700 rounded-md">确认添加</button>
-                    </div>
-                </div>
-            </div>
-        );
-    };
-    
     const CounselorSelfEditForm = ({ counselor, onSave, onCancel, unassignedClients, currentUser, fetchData, showAlert }) => {
         const { useState } = React;
         const [formData, setFormData] = useState({
@@ -1330,16 +1294,87 @@
         );
     };
 
-    const ClientManagementSection = ({ clients, onSelectClient, isManagerView, onUpdateClient, onDeleteClient, onSaveUser, selectedClient, onClientDetailBack, setGlobalLoadingMessage, showAlert }) => {
+    const ClientManagementSection = ({ clients, onSelectClient, isManagerView, onUpdateClient, onDeleteClient, onSaveUser, selectedClient, onClientDetailBack, setGlobalLoadingMessage, showAlert, currentUser, fetchData }) => {
         const { useState } = React;
         const [view, setView] = useState('list');
         const [searchTerm, setSearchTerm] = useState('');
         const [clientToEdit, setClientToEdit] = useState(null);
-        const [showAddClientModal, setShowAddClientModal] = useState(false);
-        const [bindingCode, setBindingCode] = useState('');
-        const [bindingStep, setBindingStep] = useState(1); // 1: 输入口令，2: 填写信息
-        const [pendingClient, setPendingClient] = useState(null);
-        const [addClientForm, setAddClientForm] = useState({ name: '', age: '', gender: '未透露' });
+        // 注释掉口令相关代码 - 不再需要
+        // const [showAddClientModal, setShowAddClientModal] = useState(false);
+        // const [bindingCode, setBindingCode] = useState('');
+        // const [pendingClient, setPendingClient] = useState(null);
+
+        // 注释掉绑定口令提交处理函数 - 不再需要
+        // const handleBindingCodeSubmit = async () => {
+        //     if (!bindingCode || bindingCode.trim().length !== 6) {
+        //         showAlert('请输入一个6位数的绑定口令。');
+        //         return;
+        //     }
+        //     
+        //     try {
+        //         // 验证绑定码
+        //         const verifyResponse = await fetch('/api/verify-binding-code', {
+        //             method: 'POST',
+        //             headers: { 'Content-Type': 'application/json' },
+        //             body: JSON.stringify({ binding_code: bindingCode.toUpperCase() }),
+        //         });
+        //         
+        //         if (verifyResponse.ok) {
+        //             const verifyResult = await verifyResponse.json();
+        //             
+        //             // 验证成功后直接添加来访者，信息留空待编辑
+        //             const clientData = {
+        //                 id: verifyResult.client.id,
+        //                 name: verifyResult.client.name || verifyResult.client.username || '',
+        //                 age: '',
+        //                 gender: '未透露',
+        //                 grade: '',
+        //                 sexualOrientation: '',
+        //                 contact: '',
+        //                 referredBy: '',
+        //                 historyOfIllness: '',
+        //                 mentalStateScore: '5',
+        //                 disabilityStatus: '',
+        //                 religiousBelief: '',
+        //                 ethnicIdentity: '',
+        //                 personalFinance: '',
+        //                 familyFinance: '',
+        //                 joinDate: new Date().toISOString().split('T')[0]
+        //             };
+        //             
+        //             const addResponse = await fetch('/api/add-client-to-counselor', {
+        //                 method: 'POST',
+        //                 headers: { 'Content-Type': 'application/json' },
+        //                 body: JSON.stringify({ 
+        //                     counselor_username: currentUser?.username,
+        //                     binding_code: bindingCode.toUpperCase(),
+        //                     client_data: clientData 
+        //                 }),
+        //             });
+        //             
+        //             if (addResponse.ok) {
+        //                 const addResult = await addResponse.json();
+        //                 showAlert('来访者添加成功！您可以在来访者列表中编辑详细信息。');
+        //                 // 重置弹窗状态
+        //                 setShowAddClientModal(false);
+        //                 setBindingCode('');
+        //                 setPendingClient(null);
+        //                 // 刷新数据
+        //                 if (typeof fetchData === 'function') {
+        //                     fetchData();
+        //                 }
+        //             } else {
+        //                 const addError = await addResponse.json();
+        //                 showAlert(addError.message || '添加来访者失败，请重试。');
+        //             }
+        //         } else {
+        //             const verifyError = await verifyResponse.json();
+        //             showAlert(verifyError.message || '口令验证失败，请检查后重试。');
+        //         }
+        //     } catch (error) {
+        //         showAlert('网络错误，请稍后重试。');
+        //     }
+        // };
 
         if (selectedClient && isManagerView) {
             return <ClientDetailView 
@@ -1391,7 +1426,7 @@
                 <div className="flex justify-between items-center mb-6 pb-4 border-b">
                     <h2 className="text-2xl font-semibold text-gray-700 flex items-center"><span className="mr-3 text-2xl">👥</span>{title}</h2>
                     {!isManagerView && (
-                        <button onClick={() => setShowAddClientModal(true)} className="bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2 px-4 rounded-lg flex items-center shadow-sm">
+                        <button onClick={() => { setClientToEdit(null); setView('form'); }} className="bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2 px-4 rounded-lg flex items-center shadow-sm">
                             <span className="mr-2">➕</span>添加来访者
                         </button>
                     )}
@@ -1401,37 +1436,21 @@
                         </button>
                     )}
                 </div>
-                {/* 添加来访者弹窗 */}
-                {showAddClientModal && (
-                    <div className="custom-modal-backdrop animate-fadeIn" onClick={() => { setShowAddClientModal(false); setBindingStep(1); setBindingCode(''); setAddClientForm({ name: '', age: '', gender: '未透露' }); setPendingClient(null); }}>
+                {/* 注释掉口令相关的弹窗 - 不再需要 */}
+                {/* Commented out modal - binding code feature removed */}
+                {/* {showAddClientModal && (
+                    <div className="custom-modal-backdrop animate-fadeIn" onClick={() => { setShowAddClientModal(false); setBindingCode(''); setPendingClient(null); }}>
                         <div className="custom-modal-content" onClick={e => e.stopPropagation()}>
-                            {bindingStep === 1 ? (
-                                <>
-                                    <h3 className="text-lg font-bold mb-2">添加来访者</h3>
-                                    <p className="text-sm text-gray-600 mb-4">请输入来访者提供的6位绑定口令</p>
-                                    <input type="text" maxLength="6" value={bindingCode} onChange={e => setBindingCode(e.target.value)} className="w-full p-2 border rounded-md text-center tracking-widest font-mono" />
-                                    <div className="flex justify-end gap-2 mt-6">
-                                        <button onClick={() => setShowAddClientModal(false)} className="px-4 py-2 bg-gray-200 hover:bg-gray-300 rounded-md border">取消</button>
-                                        <button onClick={handleBindingCodeSubmit} className="px-4 py-2 text-white bg-blue-600 hover:bg-blue-700 rounded-md">下一步</button>
-                                    </div>
-                                </>
-                            ) : (
-                                <>
-                                    <h3 className="text-lg font-bold mb-2">填写来访者信息</h3>
-                                    <div className="space-y-3">
-                                        <div><label className="block text-sm font-medium">姓名 <span className="text-red-500">*</span></label><input type="text" value={addClientForm.name} onChange={e => setAddClientForm(f => ({ ...f, name: e.target.value }))} className="w-full p-2 border rounded-md" /></div>
-                                        <div><label className="block text-sm font-medium">年龄 <span className="text-red-500">*</span></label><input type="number" value={addClientForm.age} onChange={e => setAddClientForm(f => ({ ...f, age: e.target.value }))} className="w-full p-2 border rounded-md" /></div>
-                                        <div><label className="block text-sm font-medium">性别</label><select value={addClientForm.gender} onChange={e => setAddClientForm(f => ({ ...f, gender: e.target.value }))} className="w-full p-2 border rounded-md"><option>未透露</option><option>男</option><option>女</option><option>其他</option></select></div>
-                                    </div>
-                                    <div className="flex justify-end gap-2 mt-6">
-                                        <button onClick={() => { setBindingStep(1); setAddClientForm({ name: '', age: '', gender: '未透露' }); setPendingClient(null); }} className="px-4 py-2 bg-gray-200 hover:bg-gray-300 rounded-md border">上一步</button>
-                                        <button onClick={handleAddClientInfoSubmit} className="px-4 py-2 text-white bg-blue-600 hover:bg-blue-700 rounded-md">提交</button>
-                                    </div>
-                                </>
-                            )}
+                            <h3 className="text-lg font-bold mb-2">添加来访者</h3>
+                            <p className="text-sm text-gray-600 mb-4">请输入来访者提供的6位绑定口令，来访者将被直接添加到您的管理列表中</p>
+                            <input type="text" maxLength="6" value={bindingCode} onChange={e => setBindingCode(e.target.value)} className="w-full p-2 border rounded-md text-center tracking-widest font-mono" placeholder="输入6位口令" />
+                            <div className="flex justify-end gap-2 mt-6">
+                                <button onClick={() => setShowAddClientModal(false)} className="px-4 py-2 bg-gray-200 hover:bg-gray-300 rounded-md border">取消</button>
+                                <button onClick={handleBindingCodeSubmit} className="px-4 py-2 text-white bg-blue-600 hover:bg-blue-700 rounded-md">添加来访者</button>
+                            </div>
                         </div>
                     </div>
-                )}
+                )} */}
                 <input type="text" placeholder="搜索来访者姓名..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="w-full p-3 mb-4 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"/>
                 {filteredClients.length > 0 ? (
                     <ul className="space-y-3">{filteredClients.map(client => (<li key={client.id} onClick={() => onSelectClient(client)} className="bg-gray-50 hover:bg-blue-50 border rounded-lg p-4 cursor-pointer flex justify-between items-center transition-all duration-200 hover:shadow-md"><div><p className="text-lg font-medium text-blue-700">{client.name} <span className="text-sm text-gray-500">({client.gender}, {client.age}岁)</span></p><p className="text-sm text-gray-600">加入日期: {client.joinDate}</p></div><span className="text-gray-400 font-bold">❯</span></li>))}</ul>
