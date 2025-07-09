@@ -26,6 +26,7 @@ import logging
 import time
 import random
 import string
+import google.generativeai as genai
 
 # --- Flask 应用设置 ---
 # 定义静态文件夹的路径，使其相对于此文件的位置，这在部署时更可靠
@@ -33,6 +34,7 @@ static_folder_path = os.path.join(os.path.dirname(__file__), 'static')
 app = Flask(__name__, static_folder=static_folder_path)
 CORS(app)  # 允许跨域请求
 
+    
 # 配置日志记录以更好地进行调试
 logging.basicConfig(level=logging.INFO)
 
@@ -61,16 +63,16 @@ def write_data(data):
 
 # --- PROMPTS (完整版) ---
 def get_conceptualization_prompt_text():
-    return """你是一位资深的心理咨询师。根据文件中的咨询逐字稿内容以及来访的基本信息，提供个案概念化报告。报告用于辅助另一位咨询师改善自己的咨询服务质量。个案概念化整体上应遵循‘’中的步骤：
-‘	1.选择一个最适合来访者的理论范式,使用理论假设去指导个案概念化和治疗方案的建构
+    return """你是一位资深的心理咨询师。根据文件中的咨询逐字稿内容以及来访的基本信息，提供个案概念化报告。报告用于辅助另一位咨询师改善自己的咨询服务质量。个案概念化整体上应遵循'中的步骤：
+'	1.选择一个最适合来访者的理论范式,使用理论假设去指导个案概念化和治疗方案的建构
 	2.利用一些假设、支持性的材料或结论，作为个案概念化的关键信息
 	3.概述治疗计划，将长期、短期治疗目标作为发展治疗计划的关键要点。治疗目标的表述让来访可以理解，尽量符合其期望与价值观。
-4.提示咨询师何种表达方式对来访可能是有吸引力的。提示接下来的咨询方向（咨询师该怎样做），包括但不限于哪些话题可能需要被深入讨论和谈论哪些话题可能存在潜在风险。’
+4.提示咨询师何种表达方式对来访可能是有吸引力的。提示接下来的咨询方向（咨询师该怎样做），包括但不限于哪些话题可能需要被深入讨论和谈论哪些话题可能存在潜在风险。'
 
 关于个案概念化的结构要素和内容，参考{}内的要求：
 {	1.概要：根据理论视角对来访核心优势和局限的简要分析假设。即对来访的核心印象、总览，以帮助通过阅读个案概念化对个案有大致了解。内容包括：人口学与社会文化等基本信息、问题情况与咨询目标简介。
 	2.支持性素材：为概要提供细节依据，包括但不限于：1.对来访优势的深度分析（优势的地方、积极的因素、成功、应对策略、技能、促进改变的因子)；2.对弱点的深度分析（担心、困难、问题、症状、缺陷技术、治疗障碍）；3.来访的成长史、部分生活史，呈现过去成长和现在生活中的各种细节；困难和资源、咨询和生活中的模式等。4.咨询目标，实现目标的可能路径与阻碍
-	3. 初始评估会谈及报告：聚焦来访当下的功能（功能维度：动力学）
+	3.	初始评估会谈及报告：聚焦来访当下的功能（功能维度：动力学）
 	评估来访问题的严重程度，同时，也要从以下几个领域评估咨询师与来访的潜在差异：1.先后天残障；2.宗教信仰：3.种族和民族认同；4.个人经济地位；5.性取向与性别
 这种差异评估是为了鉴别权力差异（咨询专家与求助者）和防止发生压迫/侵犯。
 }
@@ -80,7 +82,7 @@ def get_conceptualization_prompt_text():
 	1.治疗方案综述：简要介绍治疗计划是如何进行的。使用来访理解的语言增强对治疗的掌控感、责任心。和来访共同确认。
 	2.长期治疗目标：实则由多个短期目标构成。
 	3.短期治疗目标：具体、可测量。这种积极变化应对于来访是可完成的、有动机的，以内化进来访的内心。
- 
+
 二、治疗方案的视角
 	每个治疗目标和支持材料应聚焦于来访各种主要社会角色（员工、父亲、朋友……）的功能水平或行为症状。
 1.基于假设模式
@@ -91,7 +93,7 @@ def get_conceptualization_prompt_text():
 	根据来访与重要他人和咨询中的关系模式，探索并分析关系如何建立、加强、破裂，行为是哪些。可以向现实生活中的不同模板询问、学习。
 4.基于历史模式
 	从过去习得了什么，这些习得的模式如何带来心理问题。来访的需要和当前状况，最迫切关注的焦点，是如何与过去的习得产生联系的。
- 
+
 三、治疗方案的格式规范
 1.基本模式
 	主要聚焦于来访者需要达到的、学习的或者需要发展的内容。
@@ -119,8 +121,8 @@ def get_assessment_prompt_text():
 	此外，自我评价的问题也会导致自我知觉的扭曲和自尊管理的困难。有的人会高估自己的能力(夸大)，而有的人会低估自己的能力（抑郁），又或者理想化他人。（嫉妒具有攻击性，而羡慕具有靠近的倾向）
 	2.人际关系功能：保持稳定、信任、亲密关系的能力
 	关键：1.关系中对自己和对方的信任感、2.感知度：既好又坏的立体性、独特个性的独立性（明白他人的思想和感受与自己不同，心智化能力）、过去到现在与未来可能变化的完整性。3.安全感：抵抗面对分离、分歧、消极情绪。4.亲密性（边界情况）；5.相互依存度：合适的依存是既给予也享受的。
-	 
-	除此以外仍然关键的要素有：共情能力、来访意识与无意识对他人的期待和对关系的幻想。 
+	 
+	除此以外仍然关键的要素有：共情能力、来访意识与无意识对他人的期待和对关系的幻想。	 
 	两种关系问题：无意识投射与幻想、缺乏社交功能。前者揭露，后者支持
 	在成长的过程中，小时候和重要他人的互动为他们整个人生中与人互动的方式打下了不可磨灭的烙印。被爱护和照料得很好的人学会了期待从他人那里也得到这些，而被虐待或忽视的人学会了预期被虐待。即使人们意识不到这些内化的无意识的关系模式和幻想，也依然影响着他们的每一次行动。
 	这些幻想之所以残留在意识之外，是因为它们引发了羞愧、焦虑或其他令人不舒服的强烈情感。如果他们意识不到这些无意识的需求，人们就无法选择能和他们建立成熟满意的人际关系的人。甚至意识层面的需求和无意识的需求有所冲突。
@@ -131,26 +133,26 @@ def get_assessment_prompt_text():
 	感觉刺激管理能力：对各种感官刺激的耐受和注意力分配能力
 	情绪管理能力：耐受、管理、稳定体验、表达情绪的能力。情绪快速激烈变化说明该能力差。
 	冲动控制差可能有物质成瘾、控制性强、暴力、违法行为等问题
-	 
+	 
 	无意识的调节压力即是防御机制，我们应对压力的个性化方式在早年时往往具有适应性意义，让我们免受负面感受的威胁。评价防御机制的三个维度：
 	1.适应性：帮助适应压力的同时，保护或增强机能。适应性不是绝对的，一种情形下的强适应性机制可能是另一种情形下的弱适应性机制。2.灵活性。3.对思维与情感的自知力
 	不适应的信号：1防御动用了过多的心理能量，以至于只给我们留下很少的精力去发动其他的重要功能。2防御损害了体验情感，或拥有成熟满意的人际关系的能力。3泛化、僵化的防御方式。4以自我毁灭或身体痛苦为代价
 	不适应信号的识别：1心理或行为表现；2主观或客观的痛苦；3人际关系问题；4反移情（这也提示着生活中他人对来访的感受）
 	干预第一步：帮助来访者认清他们的适应方式有问题，当前防御的效果是有限的。将僵化的防御与新习得的适应性防御，两种方式的结果进行比较、确认，能更好的留在来访心中。
- 
+
 	4.认知功能
 4.1组织与规划思维、决策制订和问题解决能力、创造性思维
 	A有条理，以细节为导向，会提前规划，并且可以冷静地解决问题。B更加随意，频繁地改变主意，以一种更情绪化的方式解决问题。最终，两个方案都可以大获成功，但是就计划筹备它们的思路和过程而言，是相当不同的。我们的任务不是去评判哪个方式更好，而是描述我们的来访解决问题的风格，同时去思考这些风格是如何积极或消极地影响他们的生活的。
 	4.2判断能力：意识到一个有意行为的适当性和可能发生的结果，且行为能够体现这种意识（知道踩油门会出车祸但还是踩了，冲动不叫有判断力）
-“明辨是非”的道德判断力是超我的功能，也可以通过内疚感来评估,如果满足愿望的冲动无法控制或道德判断不正常，都属于认知功能异常。判断力不是“全或无”的性质，而是可以在不同环境下增大或衰减的。
+"明辨是非"的道德判断力是超我的功能，也可以通过内疚感来评估,如果满足愿望的冲动无法控制或道德判断不正常，都属于认知功能异常。判断力不是"全或无"的性质，而是可以在不同环境下增大或衰减的。
 	4.3反思能力：评估/检验自身想法和行为的能力，修正不一致的态度和感受的能力。
 	①心理感受性是和自省力有所关联的，它指的是思考某人产生思维、感觉和行为时的可能有的无意识动机的能力。自省的能力帮助人们认识和改善他们对自己和与他人关系的感知。
 	②现实检验能力：分辨现实/事实与幻想/主观臆测的能力
-	 来访的认知功能差，是无意识使其阻滞，还是从未习得？如果一个人有能力执行功能但是被阻滞了，就被认为是由冲突导致的问题；而如果一个人缺乏执行功能的能力，甚至从早年间就有过种种迹象，就被认为是由缺陷导致的
+	 来访的认知功能差，是无意识使其阻滞，还是从未习得？如果一个人有能力执行功能但是被阻滞了，就被认为是由冲突导致的问题；而如果一个人缺乏执行功能的能力，甚至从早年间就有过种种迹象，就被认为是由缺陷导致的
 	另外，问题是长期/近期的、是总体性的还是选择性的，都有助于区分冲突/缺陷。 
- 
+ 
 5.工作和娱乐功能
-	工作是付出身体或是精神努力去做某事，有目的性的活动。一个人“选择”做了什么（当然也包括职业）可以反映出他的个人和人际生活，也匹配于他的心智、能力、局限性。
+	工作是付出身体或是精神努力去做某事，有目的性的活动。一个人"选择"做了什么（当然也包括职业）可以反映出他的个人和人际生活，也匹配于他的心智、能力、局限性。
 	娱乐指放松、沉浸于幻想、无焦虑的体验无意识情感和驱力的能力。会娱乐的人可能拥有更健康的情绪生活并且成长得更顺利，缺乏休闲活动暗示他们在放松和享受方面有巨大问题。
 	评估工作和娱乐领域：1.很好地与他们的发展水平或年龄、天赋、局限性匹配；2.感到舒服或愉悦；3.物质基础足以照顾自己和家人。"""
     
@@ -268,10 +270,6 @@ def login():
     if not user:
         return jsonify({"message": "用户不存在"}), 404
     
-    # [OPTIMIZATION 1] 来访者登录，仅需用户名
-    if user['role'] == 'client' and role_attempt == 'client':
-        return jsonify({"message": f"欢迎回来, {username}!", "username": username, "role": user['role']}), 200
-
     if user['password'] == password and user['role'] == role_attempt:
         return jsonify({"message": f"欢迎回来, {username}!", "username": username, "role": user['role']}), 200
     else:
@@ -332,7 +330,13 @@ def save_counselor_data(username):
         counselor_profile['name'] = profile_updates.get('name', counselor_profile['name'])
         counselor_profile['modality'] = profile_updates.get('modality', counselor_profile['modality'])
         counselor_profile['clinicalBackground'] = profile_updates.get('clinicalBackground', counselor_profile.get('clinicalBackground', ''))
-        counselor_profile['contactInfo'] = profile_updates.get('contactInfo', counselor_profile.get('contactInfo', '')) # 优化点3: 保存联系方式
+        counselor_profile['contactInfo'] = profile_updates.get('contactInfo', counselor_profile.get('contactInfo', ''))
+        # 修复缺失字段：添加对年龄、性别、院校、个人特点陈述、照片的更新
+        counselor_profile['age'] = profile_updates.get('age', counselor_profile.get('age', ''))
+        counselor_profile['gender'] = profile_updates.get('gender', counselor_profile.get('gender', '未透露'))
+        counselor_profile['university'] = profile_updates.get('university', counselor_profile.get('university', ''))
+        counselor_profile['personalStatement'] = profile_updates.get('personalStatement', counselor_profile.get('personalStatement', ''))
+        counselor_profile['photo'] = profile_updates.get('photo', counselor_profile.get('photo', ''))
         all_data['counselor_data']['counselors'][counselor_index] = counselor_profile
     
     allowed_client_ids = set(counselor_profile.get('assignedClientIds', []))
@@ -585,28 +589,38 @@ def save_client_data(username):
     return jsonify({"message": "您的信息已更新"}), 200
 
 # --- AI 分析 API ---
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "YOUR_GEMINI_API_KEY")
-GEMINI_API_URL = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key={GEMINI_API_KEY}"
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "AIzaSyBGmOLVLWN-CcN6H59ZiUWW2JZ6NBe9txU")
 
 def call_gemini_api(system_prompt, user_prompt):
-    headers = {'Content-Type': 'application/json'}
     full_prompt = f"{system_prompt}\n\n---\n\n{user_prompt}"
-    payload = {
-        "contents": [{
-            "parts": [{"text": full_prompt}]
-        }]
-    }
     try:
-        response = requests.post(GEMINI_API_URL, headers=headers, json=payload, timeout=300)
-        response.raise_for_status()
-        data = response.json()
-        if 'candidates' not in data or not data['candidates']:
-             raise ValueError("AI响应中没有候选内容。可能已被安全设置拦截。")
-        content = data['candidates'][0]['content']['parts'][0]['text']
-        return content
+        # 初始化API配置和模型
+        genai.configure(api_key=GEMINI_API_KEY)
+        ai_model = genai.GenerativeModel('gemini-2.5-flash')
+        
+        app.logger.info(f"正在调用Gemini API，提示词长度: {len(full_prompt)}")
+        
+        response = ai_model.generate_content(full_prompt)
+        
+        # 检查响应
+        if not response.candidates:
+            app.logger.error("AI响应中没有候选内容，可能被安全设置拦截")
+            raise ValueError("AI响应中没有候选内容。可能已被安全设置拦截。")
+        
+        if not response.candidates[0].content:
+            app.logger.error("AI响应的候选内容为空")
+            raise ValueError("AI响应的内容为空")
+        
+        # 正确获取响应文本
+        result_text = response.candidates[0].content.parts[0].text
+        app.logger.info(f"AI API调用成功，响应长度: {len(result_text)}")
+        
+        return result_text
+        
     except Exception as e:
         app.logger.error(f"调用Gemini API时出错: {e}")
-        app.logger.error(f"Response Body: {response.text if 'response' in locals() else 'N/A'}")
+        app.logger.error(f"错误类型: {type(e).__name__}")
+        app.logger.error(f"API密钥设置: {'已设置' if GEMINI_API_KEY and GEMINI_API_KEY != 'YOUR_GEMINI_API_KEY' else '未设置或使用默认值'}")
         raise
 
 @app.route('/api/ai/conceptualization', methods=['POST'])
@@ -648,6 +662,255 @@ def get_supervision():
     except Exception as e:
         return jsonify({"error": f"服务器内部错误: {e}"}), 500
 
+# --- 预约相关API ---
+@app.route('/api/appointments/create', methods=['POST'])
+def create_appointment():
+    """创建预约请求"""
+    data = request.get_json()
+    client_username = data.get('client_username')
+    counselor_id = data.get('counselor_id')
+    message = data.get('message', '')
+    
+    if not all([client_username, counselor_id]):
+        return jsonify({"message": "缺少必要参数"}), 400
+    
+    all_data = read_data()
+    
+    # 验证来访者
+    if client_username not in all_data.get('users', {}):
+        return jsonify({"message": "来访者不存在"}), 404
+    
+    # 验证咨询师
+    counselor = next((c for c in all_data['counselor_data']['counselors'] if c.get('id') == counselor_id), None)
+    if not counselor:
+        return jsonify({"message": "咨询师不存在"}), 404
+    
+    # 创建预约请求
+    if 'appointment_requests' not in all_data['counselor_data']:
+        all_data['counselor_data']['appointment_requests'] = []
+    
+    appointment_request = {
+        "id": f"req-{int(time.time())}-{random.randint(1000, 9999)}",
+        "client_username": client_username,
+        "counselor_id": counselor_id,
+        "message": message,
+        "status": "pending",  # pending, accepted, rejected
+        "created_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "processed_at": None
+    }
+    
+    all_data['counselor_data']['appointment_requests'].append(appointment_request)
+    write_data(all_data)
+    
+    return jsonify({"message": "预约请求已发送"}), 201
+
+@app.route('/api/appointments/requests/<counselor_username>', methods=['GET'])
+def get_appointment_requests(counselor_username):
+    """获取指定咨询师的预约请求"""
+    all_data = read_data()
+    
+    # 找到咨询师
+    counselor = next((c for c in all_data['counselor_data']['counselors'] if c.get('username') == counselor_username), None)
+    if not counselor:
+        return jsonify({"message": "咨询师不存在"}), 404
+    
+    # 获取该咨询师的预约请求
+    requests = [r for r in all_data['counselor_data'].get('appointment_requests', []) 
+                if r.get('counselor_id') == counselor.get('id')]
+    
+    # 添加来访者信息
+    for req in requests:
+        client = next((c for c in all_data['counselor_data']['clients'] 
+                      if c.get('username') == req.get('client_username')), None)
+        if client:
+            req['client_info'] = {
+                'name': client.get('name'),
+                'age': client.get('age'),
+                'gender': client.get('gender')
+            }
+    
+    return jsonify(requests), 200
+
+@app.route('/api/appointments/process', methods=['POST'])
+def process_appointment_request():
+    """处理预约请求（接受或拒绝）"""
+    data = request.get_json()
+    request_id = data.get('request_id')
+    action = data.get('action')  # 'accept' or 'reject'
+    counselor_username = data.get('counselor_username')
+    appointment_data = data.get('appointment_data')  # 仅在接受时需要
+    
+    if not all([request_id, action, counselor_username]):
+        return jsonify({"message": "缺少必要参数"}), 400
+    
+    all_data = read_data()
+    
+    # 找到预约请求
+    request_index = next((i for i, r in enumerate(all_data['counselor_data'].get('appointment_requests', [])) 
+                         if r.get('id') == request_id), -1)
+    
+    if request_index == -1:
+        return jsonify({"message": "预约请求不存在"}), 404
+    
+    appointment_request = all_data['counselor_data']['appointment_requests'][request_index]
+    
+    # 验证咨询师权限
+    counselor = next((c for c in all_data['counselor_data']['counselors'] 
+                     if c.get('username') == counselor_username), None)
+    if not counselor or counselor.get('id') != appointment_request.get('counselor_id'):
+        return jsonify({"message": "无权处理此预约"}), 403
+    
+    # 更新请求状态
+    appointment_request['status'] = 'accepted' if action == 'accept' else 'rejected'
+    appointment_request['processed_at'] = time.strftime("%Y-%m-%d %H:%M:%S")
+    
+    if action == 'accept' and appointment_data:
+        # 创建正式的预约记录
+        new_appointment = {
+            "id": f"appt-{int(time.time())}-{random.randint(1000, 9999)}",
+            "date": appointment_data.get('date'),
+            "time": appointment_data.get('time'),
+            "location": appointment_data.get('location'),
+            "format": appointment_data.get('format'),  # 'online' or 'offline'
+            "clientId": next((c.get('id') for c in all_data['counselor_data']['clients'] 
+                            if c.get('username') == appointment_request.get('client_username')), None),
+            "counselorId": counselor.get('id'),
+            "notes": f"通过预约系统创建 - {appointment_request.get('message', '')}"
+        }
+        
+        if 'appointments' not in all_data['counselor_data']:
+            all_data['counselor_data']['appointments'] = []
+        
+        all_data['counselor_data']['appointments'].append(new_appointment)
+    
+    write_data(all_data)
+    
+    message = "预约已接受并安排到日程" if action == 'accept' else "预约已拒绝"
+    return jsonify({"message": message}), 200
+
+@app.route('/api/appointments/pending/<counselor_id>', methods=['GET'])
+def get_pending_appointments(counselor_id):
+    """获取咨询师的待处理预约"""
+    all_data = read_data()
+    
+    # 首先尝试通过counselor_id找到咨询师
+    counselor = next((c for c in all_data['counselor_data']['counselors'] if c.get('id') == counselor_id), None)
+    if not counselor:
+        # 如果没找到，尝试通过username找到
+        counselor = next((c for c in all_data['counselor_data']['counselors'] if c.get('username') == counselor_id), None)
+    
+    if not counselor:
+        return jsonify([]), 200
+    
+    # 获取该咨询师的待处理预约
+    pending_appointments = [
+        req for req in all_data['counselor_data'].get('appointment_requests', [])
+        if req.get('counselor_id') == counselor.get('id') and req.get('status') == 'pending'
+    ]
+    
+    return jsonify(pending_appointments), 200
+
+@app.route('/api/appointments/accept', methods=['POST'])
+def accept_appointment():
+    """接受预约请求"""
+    data = request.get_json()
+    appointment_id = data.get('appointment_id')
+    
+    if not appointment_id:
+        return jsonify({"message": "缺少预约ID"}), 400
+    
+    all_data = read_data()
+    
+    # 找到并更新预约状态
+    for req in all_data['counselor_data'].get('appointment_requests', []):
+        if req['id'] == appointment_id:
+            req['status'] = 'accepted'
+            req['processed_at'] = time.strftime("%Y-%m-%d %H:%M:%S")
+            break
+    else:
+        return jsonify({"message": "预约不存在"}), 404
+    
+    write_data(all_data)
+    return jsonify({"message": "预约已接受"}), 200
+
+@app.route('/api/appointments/reject', methods=['POST'])
+def reject_appointment():
+    """拒绝预约请求"""
+    data = request.get_json()
+    appointment_id = data.get('appointment_id')
+    
+    if not appointment_id:
+        return jsonify({"message": "缺少预约ID"}), 400
+    
+    all_data = read_data()
+    
+    # 找到并更新预约状态
+    for req in all_data['counselor_data'].get('appointment_requests', []):
+        if req['id'] == appointment_id:
+            req['status'] = 'rejected'
+            req['processed_at'] = time.strftime("%Y-%m-%d %H:%M:%S")
+            break
+    else:
+        return jsonify({"message": "预约不存在"}), 404
+    
+    write_data(all_data)
+    return jsonify({"message": "预约已拒绝"}), 200
+
+@app.route('/api/appointments/finalize', methods=['POST'])
+def finalize_appointment():
+    """确认预约详情并添加到日程表"""
+    data = request.get_json()
+    appointment_id = data.get('appointment_id')
+    details = data.get('details')
+    
+    if not all([appointment_id, details]):
+        return jsonify({"message": "缺少必要参数"}), 400
+    
+    all_data = read_data()
+    
+    # 找到预约请求
+    appointment_request = None
+    for req in all_data['counselor_data'].get('appointment_requests', []):
+        if req['id'] == appointment_id and req['status'] == 'accepted':
+            appointment_request = req
+            break
+    
+    if not appointment_request:
+        return jsonify({"message": "预约不存在或状态不正确"}), 404
+    
+    # 找到客户ID
+    client = next((c for c in all_data['counselor_data']['clients'] 
+                  if c.get('username') == appointment_request['client_username']), None)
+    if not client:
+        return jsonify({"message": "来访者不存在"}), 404
+    
+    # 创建正式的预约记录
+    final_appointment = {
+        'id': f'appt-{int(time.time())}-{random.randint(1000, 9999)}',
+        'clientId': client['id'],
+        'counselorId': appointment_request['counselor_id'],
+        'date': details['date'],
+        'time': details['time'],
+        'location': details['location'],
+        'format': details['type'],
+        'notes': f'预约系统创建 - {appointment_request.get("message", "")}',
+        'status': 'confirmed'
+    }
+    
+    # 添加到appointments列表
+    if 'appointments' not in all_data['counselor_data']:
+        all_data['counselor_data']['appointments'] = []
+    
+    all_data['counselor_data']['appointments'].append(final_appointment)
+    
+    # 从待处理列表中移除（设置为已完成）
+    appointment_request['status'] = 'completed'
+    appointment_request['finalized_at'] = time.strftime("%Y-%m-%d %H:%M:%S")
+    
+    write_data(all_data)
+    
+    return jsonify({"message": "预约已确认并添加到日程表"}), 200
+
 # --- 前端文件服务路由 ---
 @app.route('/', defaults={'path': ''})
 @app.route('/<path:path>')
@@ -660,4 +923,12 @@ def serve_frontend(path):
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
-    app.run(host='0.0.0.0', port=port, debug=False)
+    debug_mode = os.environ.get('FLASK_DEBUG', '0') == '1'
+    
+    if debug_mode:
+        print("🔧 开发模式已启用")
+        print(f"🌐 服务器运行在: http://127.0.0.1:{port}")
+        app.run(host='0.0.0.0', port=port, debug=True, use_reloader=True)
+    else:
+        print("🚀 生产模式启动")
+        app.run(host='0.0.0.0', port=port, debug=False)
