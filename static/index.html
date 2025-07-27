@@ -4,10 +4,40 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>心理咨询师助手</title>
+  <!-- Tailwind CSS -->
   <script src="https://cdn.tailwindcss.com"></script>
-  <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
-  <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+  <script>
+    // Fallback if Tailwind fails to load
+    if (!window.tailwind) {
+      document.write('<style>body{font-family:Inter,sans-serif;margin:0;padding:0;background:#f9fafb}.bg-gray-100{background-color:#f3f4f6}.bg-white{background-color:#fff}.shadow-md{box-shadow:0 4px 6px -1px rgba(0,0,0,.1)}.rounded-lg{border-radius:.5rem}.p-4{padding:1rem}.p-6{padding:1.5rem}.text-center{text-align:center}.text-xl{font-size:1.25rem}.font-bold{font-weight:700}.text-blue-600{color:#2563eb}.hover\\:bg-blue-700:hover{background-color:#1d4ed8}.min-h-screen{min-height:100vh}.flex{display:flex}.items-center{align-items:center}.justify-center{justify-content:center}.space-y-4>:not([hidden])~:not([hidden]){margin-top:1rem}.w-full{width:100%}.max-w-md{max-width:28rem}.border{border-width:1px}.rounded-md{border-radius:.375rem}.mt-1{margin-top:.25rem}.py-2{padding-top:.5rem;padding-bottom:.5rem}.px-4{padding-left:1rem;padding-right:1rem}.bg-blue-600{background-color:#2563eb}.text-white{color:#fff}.cursor-pointer{cursor:pointer}</style>');
+    }
+  </script>
+  
+  <!-- React and ReactDOM -->
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+  
+  <!-- Babel Standalone -->
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  
+  <!-- Fallback scripts if CDN fails -->
+  <script>
+    // Check if React loaded
+    if (typeof React === 'undefined') {
+      console.error('React failed to load from CDN. Please check your internet connection.');
+      document.body.innerHTML = '<div style="text-align:center;padding:50px;font-family:Arial,sans-serif;"><h2>加载失败</h2><p>无法从CDN加载必要的库文件。请检查网络连接或联系管理员。</p><p>错误：React库加载失败</p></div>';
+    }
+    // Check if ReactDOM loaded
+    if (typeof ReactDOM === 'undefined') {
+      console.error('ReactDOM failed to load from CDN. Please check your internet connection.');
+      document.body.innerHTML = '<div style="text-align:center;padding:50px;font-family:Arial,sans-serif;"><h2>加载失败</h2><p>无法从CDN加载必要的库文件。请检查网络连接或联系管理员。</p><p>错误：ReactDOM库加载失败</p></div>';
+    }
+    // Check if Babel loaded
+    if (typeof Babel === 'undefined') {
+      console.error('Babel failed to load from CDN. Please check your internet connection.');
+      document.body.innerHTML = '<div style="text-align:center;padding:50px;font-family:Arial,sans-serif;"><h2>加载失败</h2><p>无法从CDN加载必要的库文件。请检查网络连接或联系管理员。</p><p>错误：Babel库加载失败</p></div>';
+    }
+  </script>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -20,7 +50,7 @@
       background-color: rgba(0, 0, 0, 0.6);
       display: flex; align-items: center; justify-content: center;
       z-index: 1000;
-}
+    }
     .custom-modal-content {
       background: white; padding: 2rem; border-radius: 0.75rem;
       box-shadow: 0 10px 25px rgba(0, 0, 0, 0.1);
@@ -39,6 +69,17 @@
   <div id="root"></div>
 
   <script type="text/babel">
+    // Global error handler for unhandled promise rejections
+    window.addEventListener('unhandledrejection', function(event) {
+      console.error('Unhandled promise rejection:', event.reason);
+      event.preventDefault();
+    });
+
+    // Global error handler for JavaScript errors  
+    window.addEventListener('error', function(event) {
+      console.error('Global error:', event.error);
+    });
+
     const App = () => {
       const { useState, useEffect, useCallback } = React;
       
@@ -86,12 +127,20 @@
 
         try {
             const res = await fetch(dataPath);
-            if (!res.ok) throw new Error('Failed to fetch data');
+            if (!res.ok) {
+                throw new Error(`HTTP ${res.status}: ${res.statusText}`);
+            }
             const data = await res.json();
             setAppData(data);
         } catch (error) {
             console.error("Failed to fetch data:", error);
-            showAlert("加载数据失败。");
+            if (error.message.includes('404')) {
+                showAlert("API端点未找到。请确保服务器正在运行并且路由配置正确。");
+            } else if (error.message.includes('Failed to fetch')) {
+                showAlert("网络连接失败。请检查服务器是否正在运行。");
+            } else {
+                showAlert(`加载数据失败: ${error.message}`);
+            }
         } finally {
             setIsLoading(false);
         }
@@ -192,7 +241,18 @@
       
       const renderPortal = () => {
           if (isLoading || (currentUser && !appData && currentUser.role !== 'client')) {
-              return <div className="min-h-screen flex items-center justify-center">正在加载...</div>
+              return (
+                  <div className="min-h-screen flex items-center justify-center bg-gray-50">
+                      <div className="text-center p-8">
+                          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
+                          <h2 className="text-xl font-semibold text-gray-700 mb-2">正在加载...</h2>
+                          <p className="text-gray-500">请稍候，正在连接服务器</p>
+                          {currentUser && (
+                              <p className="text-sm text-gray-400 mt-2">用户: {currentUser.username} ({currentUser.role})</p>
+                          )}
+                      </div>
+                  </div>
+              )
           }
           if (!currentUser) {
               return <AuthModal onLogin={handleLogin} onRegister={handleRegister} showAlert={showAlert} />;
@@ -266,9 +326,7 @@
                     <form onSubmit={handleSubmit} className="space-y-4">
                         <div><label className="text-sm font-medium text-gray-700">用户名</label><input type="text" value={username} onChange={e => setUsername(e.target.value)} className="w-full p-2 mt-1 border rounded-md" required /></div>
                         
-                        {!(mode === 'login' && role === 'client') && (
-                          <div><label className="text-sm font-medium text-gray-700">密码</label><input type="password" value={password} onChange={e => setPassword(e.target.value)} className="w-full p-2 mt-1 border rounded-md" required /></div>
-                        )}
+                                                <div><label className="text-sm font-medium text-gray-700">密码</label><input type="password" value={password} onChange={e => setPassword(e.target.value)} className="w-full p-2 mt-1 border rounded-md" required /></div>
 
                         {mode === 'register' && (
                           <>
@@ -457,21 +515,44 @@
     const ClientPortal = ({ user, allData, onLogout, onSave, showAlert }) => {
         const { useState, useMemo, useEffect } = React;
         const [clientProfile, setClientProfile] = useState(null);
+        const [activeSection, setActiveSection] = useState('dashboard');
+        const [selectedCounselor, setSelectedCounselor] = useState(null);
 
         useEffect(() => {
             const fetchSelfData = async () => {
                 try {
                     const res = await fetch(`/api/client/me/${user.username}`);
-                    if (!res.ok) throw new Error('Could not fetch client profile');
+                    if (!res.ok) {
+                        // If the client-specific endpoint fails, try to find the client in the general data
+                        console.warn('Client-specific endpoint failed, trying general data...');
+                        if (allData && allData.clients) {
+                            const clientData = allData.clients.find(c => c.username === user.username);
+                            if (clientData) {
+                                setClientProfile(clientData);
+                                return;
+                            }
+                        }
+                        throw new Error('Could not fetch client profile');
+                    }
                     const selfData = await res.json();
                     setClientProfile(selfData);
                 } catch (error) {
-                    console.error(error);
-                    showAlert('无法加载您的个人信息。');
+                    console.error('Error fetching client profile:', error);
+                    // Fallback: try to use data from allData
+                    if (allData && allData.clients) {
+                        const clientData = allData.clients.find(c => c.username === user.username);
+                        if (clientData) {
+                            setClientProfile(clientData);
+                            return;
+                        }
+                    }
+                    showAlert('无法加载您的个人信息。请检查网络连接或联系管理员。');
                 }
             };
-            fetchSelfData();
-        }, [user.username]);
+            if (user && user.username) {
+                fetchSelfData();
+            }
+        }, [user.username, allData]);
 
         const assignedCounselor = clientProfile && allData && allData.counselors ? allData.counselors.find(c => c.assignedClientIds?.includes(clientProfile.id)) : null;
         const clientAppointments = clientProfile && allData && allData.appointments ? allData.appointments.filter(a => a.clientId === clientProfile.id) : [];
@@ -490,7 +571,17 @@
         
         // [BUG FIX] Changed loading condition to be more robust.
         if (!allData || !clientProfile) {
-            return <div className="min-h-screen flex items-center justify-center">正在加载您的信息...</div>;
+            return (
+                <div className="min-h-screen flex items-center justify-center bg-gray-50">
+                    <div className="text-center p-8">
+                        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
+                        <h2 className="text-xl font-semibold text-gray-700 mb-2">正在加载您的信息...</h2>
+                        <p className="text-gray-500">请稍候，正在获取个人档案</p>
+                        {!allData && <p className="text-sm text-gray-400 mt-2">加载基础数据中...</p>}
+                        {!clientProfile && allData && <p className="text-sm text-gray-400 mt-2">加载个人档案中...</p>}
+                    </div>
+                </div>
+            );
         }
 
         const wechatQrCodeBase64 = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAoHBwgHBgoICAgLCgoLDhgQDg0NDh0VFhEYIx8lJCIfIiEmKzcvJik0KSEiMEExNDk7Pj4+JS5ESUM8SDc9Pjv/2wBDAQoLCw4NDhwQEBw7KCIoOzs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozv/wAARCAAoACgDASIAAhEBAxEB/8QAGQABAQEBAQEAAAAAAAAAAAAAAAcGBQQI/8QAKRAAAQMDAgQGAwAAAAAAAAAAAQIDBAAFEQYHEhMhMUEUFRYiI0Jhcf/EABcBAQEBAQAAAAAAAAAAAAAAAAQBAgP/xAAaEQEBAQEBAQEAAAAAAAAAAAAAAQIDETFB/9oADAMBAAIRAxEAPwDqOkA+V8c+g/c0y0gH6vjB9B+5oDOlKUBEhISok4AFNKUoCn0gH61xY9B+5plpAP1nFv0H7mgM6UpQFSX5cSK2HJT7bKCcBS1BIz7mqtZ3GNGbLsl5tlA6qWoJA/mg89KUrKUpSgKUpSgKUpSgKUpSgKUpSgKUpSgKUpSgKUpSgKUpSgKkYlR5SVqYeQ4ELKFbVBWFDqD7io+pGJUeUlSmHkOBCyitqCthHUH3FAY0pSgP//Z";
@@ -698,8 +789,9 @@
                 return <ScheduleSection 
                           appointments={counselorData.appointments} 
                           clients={counselorData.assigned_clients} 
-                          counselors={counselorData.counselors.filter(c => c.username === user.username)} 
+                          counselors={counselorData.counselors} 
                           onUpdateAppointments={handleUpdateAppointments}
+                          isGlobalView={true}
                        />;
             case 'clientDetail':
                 return selectedClient ? 
@@ -712,7 +804,7 @@
                           setGlobalLoadingMessage={setGlobalLoadingMessage}
                           showAlert={showAlert}
                         /> : 
-                       <div className="text-center p-10 text-gray-500">请先从"来访者管理"页面选择一位来访者。</div>;
+                       <div className="text-center p-10 text-gray-500">请先从“来访者管理”页面选择一位来访者。</div>;
             case 'cbtApplication':
                 return <CBTSection showAlert={showAlert}/>;
             default:
@@ -808,6 +900,7 @@
             const { name, value } = e.target;
             setFormData(prev => ({...prev, [name]: value}));
         };
+
         const handlePhotoChange = (e) => {
             const file = e.target.files[0];
             if (file) {
@@ -819,6 +912,7 @@
                 reader.readAsDataURL(file);
             }
         };
+
         const handleSubmit = (e) => {
             e.preventDefault();
             if (!formData.name.trim()) {
@@ -827,6 +921,7 @@
             }
             onSave(formData);
         };
+
         return (
             <div className="bg-white p-6 rounded-lg shadow-md animate-fadeIn mt-8">
                 <h3 className="text-xl font-semibold text-gray-800 mb-4 border-b pb-3">编辑我的档案</h3>
@@ -841,6 +936,7 @@
                     <div><label className="block text-sm font-medium">联系方式</label><input type="text" name="contactInfo" value={formData.contactInfo} onChange={handleChange} className="w-full p-2 border rounded-md" placeholder="例如：email@example.com"/></div>
                     <div><label className="block text-sm font-medium">擅长咨询流派</label><input type="text" name="modality" value={formData.modality} onChange={handleChange} className="w-full p-2 border rounded-md" placeholder="例如：CBT, 精神动力学"/></div>
                     <div><label className="block text-sm font-medium">临床和学术背景</label><textarea name="clinicalBackground" value={formData.clinicalBackground} onChange={handleChange} rows="4" className="w-full p-2 border rounded-md" placeholder="例如：XX大学临床心理学硕士，XX医院实习经验"></textarea></div>
+
                     <div className="flex justify-end space-x-3 pt-4 border-t mt-6">
                         <button type="button" onClick={onCancel} className="px-4 py-2 bg-gray-200 hover:bg-gray-300 rounded-md border">取消</button>
                         <button type="submit" className="px-4 py-2 text-white bg-blue-600 hover:bg-blue-700 rounded-md flex items-center shadow-sm"><span className="mr-2">💾</span>保存档案</button>
@@ -984,7 +1080,7 @@
                         )
                     })}
                 </div>
-                 {counselors.length === 0 && isManagerView && <p className="text-center text-gray-500 py-8">暂无咨询师信息。点击"添加咨询师"开始。</p>}
+                 {counselors.length === 0 && isManagerView && <p className="text-center text-gray-500 py-8">暂无咨询师信息。点击“添加咨询师”开始。</p>}
             </div>
         );
     };
@@ -1335,11 +1431,6 @@
         const [view, setView] = useState('list');
         const [searchTerm, setSearchTerm] = useState('');
         const [clientToEdit, setClientToEdit] = useState(null);
-        const [showAddClientModal, setShowAddClientModal] = useState(false);
-        const [bindingCode, setBindingCode] = useState('');
-        const [bindingStep, setBindingStep] = useState(1); // 1: 输入口令，2: 填写信息
-        const [pendingClient, setPendingClient] = useState(null);
-        const [addClientForm, setAddClientForm] = useState({ name: '', age: '', gender: '未透露' });
 
         if (selectedClient && isManagerView) {
             return <ClientDetailView 
@@ -1390,57 +1481,21 @@
             <div className="bg-white p-6 rounded-lg shadow-md animate-fadeIn">
                 <div className="flex justify-between items-center mb-6 pb-4 border-b">
                     <h2 className="text-2xl font-semibold text-gray-700 flex items-center"><span className="mr-3 text-2xl">👥</span>{title}</h2>
-                    {!isManagerView && (
-                        <button onClick={() => setShowAddClientModal(true)} className="bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2 px-4 rounded-lg flex items-center shadow-sm">
-                            <span className="mr-2">➕</span>添加来访者
-                        </button>
-                    )}
-                    {isManagerView && (
+                    {isManagerView &&
                         <button onClick={() => { setClientToEdit(null); setView('form'); }} className="bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2 px-4 rounded-lg flex items-center shadow-sm">
                             <span className="mr-2">➕</span>添加新来访
                         </button>
-                    )}
+                    }
                 </div>
-                {/* 添加来访者弹窗 */}
-                {showAddClientModal && (
-                    <div className="custom-modal-backdrop animate-fadeIn" onClick={() => { setShowAddClientModal(false); setBindingStep(1); setBindingCode(''); setAddClientForm({ name: '', age: '', gender: '未透露' }); setPendingClient(null); }}>
-                        <div className="custom-modal-content" onClick={e => e.stopPropagation()}>
-                            {bindingStep === 1 ? (
-                                <>
-                                    <h3 className="text-lg font-bold mb-2">添加来访者</h3>
-                                    <p className="text-sm text-gray-600 mb-4">请输入来访者提供的6位绑定口令</p>
-                                    <input type="text" maxLength="6" value={bindingCode} onChange={e => setBindingCode(e.target.value)} className="w-full p-2 border rounded-md text-center tracking-widest font-mono" />
-                                    <div className="flex justify-end gap-2 mt-6">
-                                        <button onClick={() => setShowAddClientModal(false)} className="px-4 py-2 bg-gray-200 hover:bg-gray-300 rounded-md border">取消</button>
-                                        <button onClick={handleBindingCodeSubmit} className="px-4 py-2 text-white bg-blue-600 hover:bg-blue-700 rounded-md">下一步</button>
-                                    </div>
-                                </>
-                            ) : (
-                                <>
-                                    <h3 className="text-lg font-bold mb-2">填写来访者信息</h3>
-                                    <div className="space-y-3">
-                                        <div><label className="block text-sm font-medium">姓名 <span className="text-red-500">*</span></label><input type="text" value={addClientForm.name} onChange={e => setAddClientForm(f => ({ ...f, name: e.target.value }))} className="w-full p-2 border rounded-md" /></div>
-                                        <div><label className="block text-sm font-medium">年龄 <span className="text-red-500">*</span></label><input type="number" value={addClientForm.age} onChange={e => setAddClientForm(f => ({ ...f, age: e.target.value }))} className="w-full p-2 border rounded-md" /></div>
-                                        <div><label className="block text-sm font-medium">性别</label><select value={addClientForm.gender} onChange={e => setAddClientForm(f => ({ ...f, gender: e.target.value }))} className="w-full p-2 border rounded-md"><option>未透露</option><option>男</option><option>女</option><option>其他</option></select></div>
-                                    </div>
-                                    <div className="flex justify-end gap-2 mt-6">
-                                        <button onClick={() => { setBindingStep(1); setAddClientForm({ name: '', age: '', gender: '未透露' }); setPendingClient(null); }} className="px-4 py-2 bg-gray-200 hover:bg-gray-300 rounded-md border">上一步</button>
-                                        <button onClick={handleAddClientInfoSubmit} className="px-4 py-2 text-white bg-blue-600 hover:bg-blue-700 rounded-md">提交</button>
-                                    </div>
-                                </>
-                            )}
-                        </div>
-                    </div>
-                )}
                 <input type="text" placeholder="搜索来访者姓名..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="w-full p-3 mb-4 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"/>
                 {filteredClients.length > 0 ? (
                     <ul className="space-y-3">{filteredClients.map(client => (<li key={client.id} onClick={() => onSelectClient(client)} className="bg-gray-50 hover:bg-blue-50 border rounded-lg p-4 cursor-pointer flex justify-between items-center transition-all duration-200 hover:shadow-md"><div><p className="text-lg font-medium text-blue-700">{client.name} <span className="text-sm text-gray-500">({client.gender}, {client.age}岁)</span></p><p className="text-sm text-gray-600">加入日期: {client.joinDate}</p></div><span className="text-gray-400 font-bold">❯</span></li>))}</ul>
-                ) : <p className="text-center text-gray-500 py-8">暂无匹配的来访者。{isManagerView ? '点击"添加新来访"开始。' : '您目前没有负责的来访者。'}</p>}
+                ) : <p className="text-center text-gray-500 py-8">暂无匹配的来访者。{isManagerView ? '点击“添加新来访”开始。' : '您目前没有负责的来访者。'}</p>}
             </div>
         );
     };
 
-    const ClientForm = ({ onSave, onCancel, clientToEdit, allClients, isManagerView, isSubmitting }) => {
+    const ClientForm = ({ onSave, onCancel, clientToEdit, allClients, isManagerView }) => {
       const { useState } = React;
       const [formData, setFormData] = useState({
         name: clientToEdit?.name || '', age: clientToEdit?.age || '', gender: clientToEdit?.gender || '未透露',
@@ -1495,8 +1550,8 @@
               </div>
               <div className="flex justify-end space-x-3 pt-4 border-t mt-6">
                   <button type="button" onClick={onCancel} className="px-4 py-2 bg-gray-200 hover:bg-gray-300 rounded-md border">取消</button>
-                  <button type="submit" className="px-4 py-2 text-white bg-blue-600 hover:bg-blue-700 rounded-md flex items-center shadow-sm" disabled={isSubmitting}>
-                    <span className="mr-2">💾</span>{isSubmitting ? '提交中...' : (clientToEdit ? '保存更改' : '添加来访者')}
+                  <button type="submit" className="px-4 py-2 text-white bg-blue-600 hover:bg-blue-700 rounded-md flex items-center shadow-sm">
+                    <span className="mr-2">💾</span>{clientToEdit ? '保存更改' : '添加来访者'}
                   </button>
               </div>
             </form>
@@ -1849,7 +1904,36 @@
       );
     };
     
-    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+    // Check if all dependencies are loaded before rendering
+    if (typeof React !== 'undefined' && typeof ReactDOM !== 'undefined') {
+      try {
+        ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+        console.log('App initialized successfully');
+      } catch (error) {
+        console.error('Failed to initialize React app:', error);
+        document.getElementById('root').innerHTML = `
+          <div style="text-align:center;padding:50px;font-family:Arial,sans-serif;">
+            <h2>应用初始化失败</h2>
+            <p>React应用无法正常启动。</p>
+            <p style="color:#dc2626;font-size:14px;">错误详情: ${error.message}</p>
+            <button onclick="location.reload()" style="background:#2563eb;color:white;padding:10px 20px;border:none;border-radius:5px;cursor:pointer;margin-top:20px;">
+              重新加载页面
+            </button>
+          </div>
+        `;
+      }
+    } else {
+      console.error('React or ReactDOM not loaded');
+      document.getElementById('root').innerHTML = `
+        <div style="text-align:center;padding:50px;font-family:Arial,sans-serif;">
+          <h2>依赖库加载失败</h2>
+          <p>无法加载React或ReactDOM库。请检查网络连接。</p>
+          <button onclick="location.reload()" style="background:#2563eb;color:white;padding:10px 20px;border:none;border-radius:5px;cursor:pointer;margin-top:20px;">
+            重新加载页面
+          </button>
+        </div>
+      `;
+    }
   </script>
 </body>
               </html>
