@@ -18,7 +18,8 @@
 # 安装必要的库: pip install Flask Flask-Cors requests gunicorn
 from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
-import requests
+from google import genai
+from google.genai import types
 import os
 import json
 import traceback
@@ -26,6 +27,9 @@ import logging
 import time
 import random
 import string
+
+# 设置环境变量，确保API密钥可用
+os.environ['GEMINI_API_KEY'] = "AIzaSyBGmOLVLWN-CcN6H59ZiUWW2JZ6NBe9txU"
 
 # --- Flask 应用设置 ---
 # 定义静态文件夹的路径，使其相对于此文件的位置，这在部署时更可靠
@@ -268,10 +272,6 @@ def login():
     if not user:
         return jsonify({"message": "用户不存在"}), 404
     
-    # [OPTIMIZATION 1] 来访者登录，仅需用户名
-    if user['role'] == 'client' and role_attempt == 'client':
-        return jsonify({"message": f"欢迎回来, {username}!", "username": username, "role": user['role']}), 200
-
     if user['password'] == password and user['role'] == role_attempt:
         return jsonify({"message": f"欢迎回来, {username}!", "username": username, "role": user['role']}), 200
     else:
@@ -308,11 +308,17 @@ def get_counselor_data(username):
 
     unassigned_clients = [client for client in c_data.get('clients', []) if client.get('id') not in all_assigned_ids]
     
+    # 获取与当前咨询师相关的预约请求
+    counselor_booking_requests = []
+    if 'booking_requests' in c_data:
+        counselor_booking_requests = [req for req in c_data['booking_requests'] if req['counselorId'] == current_counselor['id']]
+    
     response_data = {
         "counselors": c_data.get('counselors', []),
         "assigned_clients": assigned_clients,
         "unassigned_clients": unassigned_clients,
-        "appointments": c_data.get('appointments', [])
+        "appointments": c_data.get('appointments', []),
+        "booking_requests": counselor_booking_requests
     }
     return jsonify(response_data)
 
@@ -497,29 +503,112 @@ def save_client_data(username):
     write_data(all_data)
     return jsonify({"message": "您的信息已更新"}), 200
 
-# --- AI 分析 API ---
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "YOUR_GEMINI_API_KEY")
-GEMINI_API_URL = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key={GEMINI_API_KEY}"
-
-def call_gemini_api(system_prompt, user_prompt):
-    headers = {'Content-Type': 'application/json'}
-    full_prompt = f"{system_prompt}\n\n---\n\n{user_prompt}"
-    payload = {
-        "contents": [{
-            "parts": [{"text": full_prompt}]
-        }]
+# --- 预约请求 API ---
+@app.route('/api/booking/request', methods=['POST'])
+def create_booking_request():
+    data = request.get_json()
+    client_username = data.get('clientUsername')
+    counselor_id = data.get('counselorId')
+    message = data.get('message', '')
+    
+    if not all([client_username, counselor_id]):
+        return jsonify({"message": "需要提供来访者用户名和咨询师ID"}), 400
+    
+    all_data = read_data()
+    
+    # 查找来访者
+    client = next((c for c in all_data['counselor_data']['clients'] if c.get('username') == client_username), None)
+    if not client:
+        return jsonify({"message": "来访者不存在"}), 404
+    
+    # 创建预约请求
+    booking_request = {
+        "id": f"booking-{int(time.time())}",
+        "clientId": client['id'],
+        "clientName": client['name'],
+        "counselorId": counselor_id,
+        "message": message,
+        "status": "pending",  # pending, accepted, rejected
+        "createdAt": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "respondedAt": None,
+        "response": ""
     }
+    
+    # 添加到数据中
+    if 'booking_requests' not in all_data['counselor_data']:
+        all_data['counselor_data']['booking_requests'] = []
+    
+    all_data['counselor_data']['booking_requests'].append(booking_request)
+    write_data(all_data)
+    
+    return jsonify({"message": "预约请求已发送", "requestId": booking_request['id']}), 201
+
+@app.route('/api/booking/respond', methods=['POST'])
+def respond_booking_request():
+    data = request.get_json()
+    request_id = data.get('requestId')
+    counselor_username = data.get('counselorUsername')
+    response_action = data.get('action')  # 'accept' or 'reject'
+    response_message = data.get('response', '')
+    
+    if not all([request_id, counselor_username, response_action]):
+        return jsonify({"message": "缺少必要参数"}), 400
+    
+    all_data = read_data()
+    
+    # 查找预约请求
+    request_index = next((i for i, r in enumerate(all_data['counselor_data'].get('booking_requests', [])) if r['id'] == request_id), -1)
+    if request_index == -1:
+        return jsonify({"message": "预约请求不存在"}), 404
+    
+    # 验证咨询师权限
+    counselor = next((c for c in all_data['counselor_data']['counselors'] if c.get('username') == counselor_username), None)
+    if not counselor:
+        return jsonify({"message": "咨询师不存在"}), 404
+    
+    booking_request = all_data['counselor_data']['booking_requests'][request_index]
+    if booking_request['counselorId'] != counselor['id']:
+        return jsonify({"message": "无权处理此预约请求"}), 403
+    
+    # 更新请求状态
+    all_data['counselor_data']['booking_requests'][request_index].update({
+        "status": "accepted" if response_action == 'accept' else "rejected",
+        "respondedAt": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "response": response_message
+    })
+    
+    write_data(all_data)
+    
+    action_text = "接受" if response_action == 'accept' else "拒绝"
+    return jsonify({"message": f"已{action_text}预约请求"}), 200
+
+# --- AI 分析 API ---
+def call_gemini_api(system_prompt, user_prompt):
+    """
+    使用 google-generativeai SDK 调用 Gemini API。
+    """
     try:
-        response = requests.post(GEMINI_API_URL, headers=headers, json=payload, timeout=300)
-        response.raise_for_status()
-        data = response.json()
-        if 'candidates' not in data or not data['candidates']:
-             raise ValueError("AI响应中没有候选内容。可能已被安全设置拦截。")
-        content = data['candidates'][0]['content']['parts'][0]['text']
-        return content
+        # 根据官方文档的正确方式创建客户端
+        client = genai.Client()
+        
+        # 将系统提示和用户提示合并
+        full_prompt = f"{system_prompt}\n\n---\n\n{user_prompt}"
+        
+        response = client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=full_prompt,
+            config=types.GenerateContentConfig(
+                thinking_config=types.ThinkingConfig(thinking_budget=0)  # 禁用思考以提高速度
+            )
+        )
+        
+        return response.text
+        
     except Exception as e:
         app.logger.error(f"调用Gemini API时出错: {e}")
-        app.logger.error(f"Response Body: {response.text if 'response' in locals() else 'N/A'}")
+        # 记录更详细的错误，如果可能的话
+        if hasattr(e, 'response'):
+            app.logger.error(f"Response Body: {e.response.text}")
         raise
 
 @app.route('/api/ai/conceptualization', methods=['POST'])
@@ -560,6 +649,144 @@ def get_supervision():
         return jsonify({"success": True, "supervision": {"status": "Complete", "content": content}})
     except Exception as e:
         return jsonify({"error": f"服务器内部错误: {e}"}), 500
+
+# --- 初始访谈 API ---
+# System Prompt 定义
+SYSTEM_PROMPT_INTERVIEW = {
+  "system_prompt_name": "Preliminary Psychological State Conversational Interview",
+  "version": "1.0",
+  "description": "A system prompt to guide an AI in conducting a structured, empathetic, and non-diagnostic conversational interview with a participant based on 15 predefined questions. The goal is a preliminary understanding of the user's psychological state.",
+  "prompt_instructions": {
+    "role_definition": {
+      "persona": "你是一位富有同理心、专业且善于倾听的对话引导者。你的语气始终保持温和、中立与关切。",
+      "objective": "通过一个包含15个问题的结构化对话，温和地引导用户进行自我探索，对用户目前的心理状态、可能的困扰和已有资源进行一个初步的、非诊断性的了解。"
+    },
+    "conversation_flow": {
+      "initial_message": "您好，欢迎参与这次对谈。接下来，我会通过12个开放性的问题，与您一同梳理和探索您近期的感受与经历。这个过程是为了帮助您进行自我觉察，并生成一份简要的分析报告，同时帮助您选择适合的咨询师。答案没有对错之分，请您放松并坦诚地分享任何您想分享的事情。整个对话是完全保密的，请放心。那么，如果你准备好了请告诉我，我们就可以开始了。",
+      "progression_logic": "严格按照 `question_list` 的顺序，一次只提问一个主问题。在用户回答后，根据 `follow_up_rules` 决定是否进行追问。完成一个主问题（及可能的追问）后，平稳地过渡到下一个主问题。",
+      "closing_message": "非常感谢您坦诚的分享。通过刚才的对话，我们一起梳理了您近期的许多感受和经历，这本身就是非常有勇气和有意义的一步。希望这次交谈能为您带来一些新的视角或思考。请记得，这仅仅是一次初步的交流，并非专业的心理诊断。如果您感觉困扰持续存在或加重，寻求专业心理咨询师的帮助会是很好的选择。再次感谢您的信任，祝您一切顺利。"
+    },
+    "follow_up_rules": {
+      "trigger_conditions": [
+        "当用户的回答非常简短、抽象或模糊时 (例如: ‘还好’, ‘不知道’, ‘就那样’)。",
+        "当用户的回答中提到了强烈的情绪（如‘非常愤怒’、‘彻底绝望’）或关键的生活事件（如‘分手后’、‘失业了’），但没有提供具体细节时。",
+        "当用户的回答中包含对分析有显著价值，但需要进一步明确的信息时。"
+      ],
+      "max_follow_ups_per_question": 2,
+      "follow_up_style": {
+        "type": "开放式、鼓励性提问",
+        "examples": [
+          "听起来这对您影响不小，您可以就这一点再多说一些吗？",
+          "当您提到‘……’的时候，具体是一种什么样的感受？",
+          "您能举一个例子来说明您刚才提到的情况吗？"
+        ]
+      },
+      "exit_condition": "在对单个主问题进行最多1-2次追问后，无论用户回答的详细程度如何，都必须礼貌地结束追问，并自然地过渡到列表中的下一个主问题，以确保对话的整体进度。"
+    },
+    "constraints_and_guidelines": {
+      "total_turns_limit": 20,
+      "tone": "共情、不评判、耐心、尊重、稳定。",
+      "language": "使用清晰、温和、非临床的日常语言。避免使用心理学术语。",
+      "prohibitions": [
+        "严禁提供任何形式的心理诊断、评估或治疗建议。",
+        "严禁对用户的想法、感受或行为进行价值评判。",
+        "严禁打断用户，给予用户充分的思考和表达时间。",
+        "如果用户明确表示不想回答某个问题，应立刻表示理解并跳到下一个问题。",
+        "**最高优先级**：如果用户表达出明确的、紧急的自我伤害或伤害他人的意图，必须立即暂停提问流程，并以最直接和关切的语气提供寻求专业紧急干预的建议和信息。"
+      ]
+    },
+    "question_list": [
+      {
+        "id": 1,
+        "text": "首先，最近有什么事情或感受一直在您的脑海里，让您特别在意或感到困扰吗？"
+      },
+      {
+        "id": 2,
+        "text": "如果用几个词来形容您最近一段时间（比如最近一两周）的整体心情，您会选择哪几个词？为什么？"
+      },
+      {
+        "id": 3,
+        "text": "当您感到焦虑或情绪低落时，脑海中通常会盘旋哪些想法或担忧？您会如何看待或评价那时的自己？"
+      },
+      {
+        "id": 4,
+        "text": "除了情绪上的感受，您的身体最近有没有发出一些“信号”？比如睡眠、食欲、精力或是一些不明原因的身体不适？"
+      },
+      {
+        "id": 5,
+        "text": "和过去相比，您最近的日常活动或兴趣爱好有什么变化吗？有没有一些以前很享受做的事，现在却感觉没什么动力了？"
+      },
+      {
+        "id": 6,
+        "text": "这些困扰在多大程度上影响了您的日常生活，比如工作/学习、处理家务或与人交往？"
+      },
+      {
+        "id": 7,
+        "text":"目前，您生活中的人际关系（如家庭、朋友、伴侣）感觉如何？它们是您的支持来源，还是压力来源？"
+      },
+      {
+        "id": 8,
+        "text": "您觉得目前的状态大概是从什么时候开始的？当时生活里是否发生了什么特别的事情？"
+      },
+      {
+        "id": 9,
+        "text": "当面对困难时，您会做些什么来让自己感觉好一点？哪些方法似乎有些效果？"
+      },
+      {
+        "id": 10,
+        "text": "在目前这段时期，您认为自身有哪些优点或力量在支撑着您？或者，生活中有哪些事能给您带来片刻的安慰？"
+      },
+      {
+        "id": 11,
+        "text": "想象一下：如果奇迹发生，所有困扰您的问题都解决了。当您第二天醒来时，您的生活会有哪些不同，会让您知道“奇迹”发生了？"
+      },
+      {
+        "id": 12,
+        "text": "最后，还有没有什么您觉得很重要，但我们还没来得及谈到的事情？"
+      }
+    ]
+  }
+}
+
+
+
+@app.route('/api/interview/chat', methods=['POST'])
+def chat_with_bot():
+    data = request.json
+    user_message = data.get('message')
+    history = data.get('history', []) # 接收前端传递的完整历史记录
+
+    if not user_message:
+        return jsonify({"error": "message is required"}), 400
+    
+    try:
+        # 根据官方文档的正确方式创建客户端
+        client = genai.Client()
+        
+        # 构建完整的对话历史内容
+        conversation_context = json.dumps(SYSTEM_PROMPT_INTERVIEW, ensure_ascii=False) + "\n\n"
+        
+        # 添加历史对话
+        for item in history:
+            role = "用户" if item['sender'] == 'user' else "助手"
+            conversation_context += f"{role}: {item['text']}\n"
+        
+        # 添加当前用户消息
+        conversation_context += f"用户: {user_message}\n助手: "
+        
+        # 根据官方文档的正确API调用方式
+        response = client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=conversation_context,
+            config=types.GenerateContentConfig(
+                thinking_config=types.ThinkingConfig(thinking_budget=8192)
+            ),
+        )
+        
+        return jsonify({"response": response.text})
+    except Exception as e:
+        app.logger.error(f"Error during Gemini chat: {e}")
+        return jsonify({"error": "Failed to get response from AI."}), 500
 
 # --- 前端文件服务路由 ---
 @app.route('/', defaults={'path': ''})
