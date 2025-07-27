@@ -299,7 +299,7 @@
             e.preventDefault();
             
             if (!username) { showAlert('请输入用户名。'); return; }
-            if (!(mode === 'login' && role === 'client') && !password) { showAlert('请输入密码。'); return; }
+            if (!password) { showAlert('请输入密码。'); return; }
 
             if (mode === 'register') {
               if (password.length < 6) { showAlert('密码必须至少为6个字符。'); return; }
@@ -592,15 +592,84 @@
                 <div className="container mx-auto px-4">
                   <div className="flex items-center justify-between h-16">
                     <h1 className="text-xl font-bold text-gray-800">来访者门户</h1>
-                    <div className="flex items-center gap-2">
-                      <span className="text-sm text-gray-500">{user.username}</span>
-                      <button onClick={onLogout} className="text-sm font-medium text-red-600 hover:underline">登出</button>
+                    <div className="flex items-center gap-4">
+                        <nav className="hidden md:flex items-center space-x-1">
+                            <button onClick={() => setActiveSection('dashboard')} className={`px-3 py-2 rounded-md text-sm font-medium flex items-center transition-colors duration-200 ${activeSection === 'dashboard' ? 'bg-blue-50 text-blue-600' : 'text-gray-500 hover:bg-gray-100'}`}>
+                                <span className="mr-2">🏠</span>主页
+                            </button>
+                            <button onClick={() => setActiveSection('counselors')} className={`px-3 py-2 rounded-md text-sm font-medium flex items-center transition-colors duration-200 ${activeSection === 'counselors' || activeSection === 'counselorDetail' ? 'bg-blue-50 text-blue-600' : 'text-gray-500 hover:bg-gray-100'}`}>
+                                <span className="mr-2">👥</span>咨询师列表
+                            </button>
+                            <button onClick={() => setActiveSection('interview')} className={`px-3 py-2 rounded-md text-sm font-medium flex items-center transition-colors duration-200 ${activeSection === 'interview' ? 'bg-blue-50 text-blue-600' : 'text-gray-500 hover:bg-gray-100'}`}>
+                                <span className="mr-2">💬</span>初始访谈
+                            </button>
+                        </nav>
+                        <div className="border-l pl-4 flex items-center gap-2">
+                            <span className="text-sm text-gray-500">{user.username}</span>
+                            <button onClick={onLogout} className="text-sm font-medium text-red-600 hover:underline">登出</button>
+                        </div>
                     </div>
                   </div>
                 </div>
               </header>
-              <main className="flex-grow container mx-auto p-4 sm:p-6 lg:p-8 space-y-8">
-                
+              <main className="flex-grow container mx-auto p-4 sm:p-6 lg:p-8">
+                {activeSection === 'dashboard' && <ClientDashboard 
+                    user={user} 
+                    clientProfile={clientProfile} 
+                    assignedCounselor={assignedCounselor} 
+                    clientAppointments={clientAppointments} 
+                    totalHours={totalHours} 
+                    monthlyHours={monthlyHours} 
+                    allData={allData} 
+                />}
+                {activeSection === 'counselors' && <CounselorListView 
+                    counselors={allData?.counselors || []} 
+                    onSelectCounselor={(counselor) => {
+                        setSelectedCounselor(counselor);
+                        setActiveSection('counselorDetail');
+                    }}
+                />}
+                {activeSection === 'counselorDetail' && selectedCounselor && <CounselorDetailView 
+                    counselor={selectedCounselor} 
+                    onBack={() => setActiveSection('counselors')}
+                    onBooking={async (counselor) => {
+                        try {
+                            const response = await fetch('/api/booking/request', {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({
+                                    clientUsername: user.username,
+                                    counselorId: counselor.id,
+                                    message: `来访者 ${user.username} 请求预约咨询`
+                                })
+                            });
+                            
+                            if (response.ok) {
+                                showAlert(`预约发送成功！请添加客服微信确定其余相关事宜：JieHuaJiJiu_`);
+                            } else {
+                                const error = await response.json();
+                                showAlert(`预约发送失败：${error.message}`);
+                            }
+                        } catch (error) {
+                            showAlert(`预约发送失败：网络错误`);
+                        }
+                    }}
+                />}
+                {activeSection === 'interview' && <InterviewSection 
+                    user={user} 
+                    showAlert={showAlert} 
+                />}
+              </main>
+            </div>
+        );
+    }
+
+    // ClientDashboard组件 - 原来的主页内容
+    const ClientDashboard = ({ user, clientProfile, assignedCounselor, clientAppointments, totalHours, monthlyHours, allData }) => {
+        const wechatQrCodeBase64 = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAoHBwgHBgoICAgLCgoLDhgQDg0NDh0VFhEYIx8lJCIfIiEmKzcvJik0KSEiMEExNDk7Pj4+JS5ESUM8SDc9Pjv/2wBDAQoLCw4NDhwQEBw7KCIoOzs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozv/wAARCAAoACgDASIAAhEBAxEB/8QAGQABAQEBAQEAAAAAAAAAAAAAAAcGBQQI/8QAKRAAAQMDAgQGAwAAAAAAAAAAAQIDBAAFEQYHEhMhMUEUFRYiI0Jhcf/EABcBAQEBAQAAAAAAAAAAAAAAAAQBAgP/xAAaEQEBAQEBAQEAAAAAAAAAAAAAAQIDETFB/9oADAMBAAIRAxEAPwDqOkA+V8c+g/c0y0gH6vjB9B+5oDOlKUBEhISok4AFNKUoCn0gH61xY9B+5plpAP1nFv0H7mgM6UpQFSX5cSK2HJT7bKCcBS1BIz7mqtZ3GNGbLsl5tlA6qWoJA/mg89KUrKUpSgKUpSgKUpSgKUpSgKUpSgKUpSgKUpSgKUpSgKUpSgKkYlR5SVqYeQ4ELKFbVBWFDqD7io+pGJUeUlSmHkOBCyitqCthHUH3FAY0pSgP//Z";
+        
+        return (
+            <div className="space-y-8">
                 <div className="bg-white p-6 rounded-lg shadow-md animate-fadeIn">
                     <div className="flex flex-col sm:flex-row items-center gap-8">
                         <div className="flex-shrink-0 text-center">
@@ -665,10 +734,129 @@
                         )}
                     </div>
                 </div>
-              </main>
             </div>
         );
     }
+
+    // CounselorListView组件 - 咨询师列表页面
+    const CounselorListView = ({ counselors, onSelectCounselor }) => {
+        const { useState } = React;
+        const [searchTerm, setSearchTerm] = useState('');
+        
+        const filteredCounselors = counselors.filter(counselor => 
+            counselor.name.toLowerCase().includes(searchTerm.toLowerCase())
+        );
+        
+        return (
+            <div className="bg-white p-6 rounded-lg shadow-md animate-fadeIn">
+                <h2 className="text-2xl font-semibold text-gray-700 mb-6 pb-4 border-b flex items-center">
+                    <span className="mr-3 text-2xl">👥</span>咨询师列表
+                </h2>
+                
+                <input 
+                    type="text" 
+                    placeholder="搜索咨询师姓名..." 
+                    value={searchTerm} 
+                    onChange={(e) => setSearchTerm(e.target.value)} 
+                    className="w-full p-3 mb-6 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                />
+                
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                    {filteredCounselors.map(counselor => (
+                        <div key={counselor.id} className="bg-gray-50 border rounded-lg p-4 hover:shadow-md transition-shadow cursor-pointer" onClick={() => onSelectCounselor(counselor)}>
+                            <div className="flex items-center mb-4">
+                                {counselor.photo ? (
+                                    <img src={counselor.photo} alt={counselor.name} className="w-16 h-16 rounded-full object-cover mr-4"/>
+                                ) : (
+                                    <div className="w-16 h-16 rounded-full bg-gray-300 flex items-center justify-center mr-4">
+                                        <span className="text-gray-600 text-xl">👤</span>
+                                    </div>
+                                )}
+                                <div className="flex-grow">
+                                    <h3 className="text-lg font-bold text-blue-700">{counselor.name}</h3>
+                                    <p className="text-sm text-gray-600">{counselor.gender || '未透露'} • {counselor.age || '年龄未透露'}岁</p>
+                                </div>
+                            </div>
+                            <p className="text-sm text-gray-700 mb-2"><strong>擅长流派:</strong> {counselor.modality || '待填写'}</p>
+                            {counselor.university && <p className="text-sm text-gray-600"><strong>院校:</strong> {counselor.university}</p>}
+                            <div className="mt-4 text-right">
+                                <span className="text-blue-600 text-sm font-medium">点击查看详情 →</span>
+                            </div>
+                        </div>
+                    ))}
+                </div>
+                
+                {filteredCounselors.length === 0 && (
+                    <p className="text-center text-gray-500 py-8">没有找到匹配的咨询师。</p>
+                )}
+            </div>
+        );
+    };
+
+    // CounselorDetailView组件 - 咨询师详情页面
+    const CounselorDetailView = ({ counselor, onBack, onBooking }) => {
+        return (
+            <div className="bg-white p-6 rounded-lg shadow-md animate-fadeIn">
+                <div className="flex items-center mb-6 pb-4 border-b">
+                    <button onClick={onBack} className="text-sm font-medium text-gray-600 hover:text-gray-900 mr-4">← 返回列表</button>
+                    <h2 className="text-2xl font-semibold text-gray-700">咨询师详情</h2>
+                </div>
+                
+                <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+                    <div className="lg:col-span-1">
+                        <div className="text-center">
+                            {counselor.photo ? (
+                                <img src={counselor.photo} alt={counselor.name} className="w-48 h-48 rounded-full object-cover mx-auto mb-4"/>
+                            ) : (
+                                <div className="w-48 h-48 rounded-full bg-gray-300 flex items-center justify-center mx-auto mb-4">
+                                    <span className="text-gray-600 text-6xl">👤</span>
+                                </div>
+                            )}
+                            <h3 className="text-2xl font-bold text-blue-700 mb-2">{counselor.name}</h3>
+                            <p className="text-gray-600 mb-4">{counselor.gender || '未透露'} • {counselor.age || '年龄未透露'}岁</p>
+                            <button 
+                                onClick={() => onBooking(counselor)}
+                                className="w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold py-3 px-6 rounded-lg transition-colors"
+                            >
+                                预约咨询
+                            </button>
+                        </div>
+                    </div>
+                    
+                    <div className="lg:col-span-2">
+                        <div className="space-y-6">
+                            <div>
+                                <h4 className="text-lg font-semibold text-gray-700 mb-2">基本信息</h4>
+                                <div className="bg-gray-50 p-4 rounded-lg space-y-2">
+                                    <p><strong>擅长咨询流派:</strong> {counselor.modality || '待填写'}</p>
+                                    {counselor.university && <p><strong>就读院校:</strong> {counselor.university}</p>}
+                                    {counselor.contactInfo && <p><strong>联系方式:</strong> {counselor.contactInfo}</p>}
+                                </div>
+                            </div>
+                            
+                            {counselor.clinicalBackground && (
+                                <div>
+                                    <h4 className="text-lg font-semibold text-gray-700 mb-2">临床和学术背景</h4>
+                                    <div className="bg-gray-50 p-4 rounded-lg">
+                                        <p className="whitespace-pre-wrap">{counselor.clinicalBackground}</p>
+                                    </div>
+                                </div>
+                            )}
+                            
+                            {counselor.personalStatement && (
+                                <div>
+                                    <h4 className="text-lg font-semibold text-gray-700 mb-2">个人特点陈述</h4>
+                                    <div className="bg-gray-50 p-4 rounded-lg">
+                                        <p className="whitespace-pre-wrap">{counselor.personalStatement}</p>
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                </div>
+            </div>
+        );
+    };
 
 
     // ================================================================================================
@@ -759,6 +947,7 @@
             { id: 'clientManagement', label: '来访者管理', icon: '👥' },
             { id: 'counselorManagement', label: '咨询师信息', icon: '🧑‍🏫' },
             { id: 'schedule', label: '咨询日程', icon: '🗓️' },
+            { id: 'bookingRequests', label: '预约请求', icon: '📋' },
             { id: 'cbtApplication', label: '辅助工具', icon: '🧠' }
         ];
 
@@ -793,6 +982,13 @@
                           onUpdateAppointments={handleUpdateAppointments}
                           isGlobalView={true}
                        />;
+            case 'bookingRequests':
+                return <BookingRequestsSection 
+                          bookingRequests={counselorData.booking_requests || []}
+                          currentUser={user}
+                          fetchData={fetchData}
+                          showAlert={showAlert}
+                       />;
             case 'clientDetail':
                 return selectedClient ? 
                        <ClientDetailView 
@@ -804,7 +1000,7 @@
                           setGlobalLoadingMessage={setGlobalLoadingMessage}
                           showAlert={showAlert}
                         /> : 
-                       <div className="text-center p-10 text-gray-500">请先从“来访者管理”页面选择一位来访者。</div>;
+                       <div className="text-center p-10 text-gray-500">请先从"来访者管理"页面选择一位来访者。</div>;
             case 'cbtApplication':
                 return <CBTSection showAlert={showAlert}/>;
             default:
@@ -935,7 +1131,7 @@
                     {formData.photo && <img src={formData.photo} alt="照片预览" className="w-24 h-24 object-cover rounded-full mt-2" />}
                     <div><label className="block text-sm font-medium">联系方式</label><input type="text" name="contactInfo" value={formData.contactInfo} onChange={handleChange} className="w-full p-2 border rounded-md" placeholder="例如：email@example.com"/></div>
                     <div><label className="block text-sm font-medium">擅长咨询流派</label><input type="text" name="modality" value={formData.modality} onChange={handleChange} className="w-full p-2 border rounded-md" placeholder="例如：CBT, 精神动力学"/></div>
-                    <div><label className="block text-sm font-medium">临床和学术背景</label><textarea name="clinicalBackground" value={formData.clinicalBackground} onChange={handleChange} rows="4" className="w-full p-2 border rounded-md" placeholder="例如：XX大学临床心理学硕士，XX医院实习经验"></textarea></div>
+                    <div><label className="block text-sm font-medium">简单介绍自己和自己的流派：</label><textarea name="clinicalBackground" value={formData.clinicalBackground} onChange={handleChange} rows="4" className="w-full p-2 border rounded-md" placeholder="例如：XX大学临床心理学硕士，XX医院实习经验"></textarea></div>
 
                     <div className="flex justify-end space-x-3 pt-4 border-t mt-6">
                         <button type="button" onClick={onCancel} className="px-4 py-2 bg-gray-200 hover:bg-gray-300 rounded-md border">取消</button>
@@ -1080,7 +1276,7 @@
                         )
                     })}
                 </div>
-                 {counselors.length === 0 && isManagerView && <p className="text-center text-gray-500 py-8">暂无咨询师信息。点击“添加咨询师”开始。</p>}
+                 {counselors.length === 0 && isManagerView && <p className="text-center text-gray-500 py-8">暂无咨询师信息。点击"添加咨询师"开始。</p>}
             </div>
         );
     };
@@ -1490,7 +1686,7 @@
                 <input type="text" placeholder="搜索来访者姓名..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="w-full p-3 mb-4 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"/>
                 {filteredClients.length > 0 ? (
                     <ul className="space-y-3">{filteredClients.map(client => (<li key={client.id} onClick={() => onSelectClient(client)} className="bg-gray-50 hover:bg-blue-50 border rounded-lg p-4 cursor-pointer flex justify-between items-center transition-all duration-200 hover:shadow-md"><div><p className="text-lg font-medium text-blue-700">{client.name} <span className="text-sm text-gray-500">({client.gender}, {client.age}岁)</span></p><p className="text-sm text-gray-600">加入日期: {client.joinDate}</p></div><span className="text-gray-400 font-bold">❯</span></li>))}</ul>
-                ) : <p className="text-center text-gray-500 py-8">暂无匹配的来访者。{isManagerView ? '点击“添加新来访”开始。' : '您目前没有负责的来访者。'}</p>}
+                ) : <p className="text-center text-gray-500 py-8">暂无匹配的来访者。{isManagerView ? '点击"添加新来访"开始。' : '您目前没有负责的来访者。'}</p>}
             </div>
         );
     };
@@ -1892,6 +2088,142 @@
         );
     };
 
+    const BookingRequestsSection = ({ bookingRequests, currentUser, fetchData, showAlert }) => {
+        const { useState } = React;
+        const [filter, setFilter] = useState('all'); // all, pending, accepted, rejected
+
+        const filteredRequests = bookingRequests.filter(req => {
+            if (filter === 'all') return true;
+            return req.status === filter;
+        });
+
+        const handleResponse = async (requestId, action) => {
+            try {
+                const response = await fetch('/api/booking/respond', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        requestId: requestId,
+                        counselorUsername: currentUser.username,
+                        action: action,
+                        response: action === 'accept' ? '预约已接受' : '预约已拒绝'
+                    })
+                });
+
+                if (response.ok) {
+                    const actionText = action === 'accept' ? '接受' : '拒绝';
+                    showAlert(`已${actionText}预约请求。请与客服（微信号：JieHuaJiJiu_）联系确定后续事宜。`);
+                    fetchData(); // 刷新数据
+                } else {
+                    const error = await response.json();
+                    showAlert(`操作失败：${error.message}`);
+                }
+            } catch (error) {
+                showAlert('操作失败：网络错误');
+            }
+        };
+
+        const getStatusColor = (status) => {
+            switch (status) {
+                case 'pending': return 'text-yellow-600 bg-yellow-100';
+                case 'accepted': return 'text-green-600 bg-green-100';
+                case 'rejected': return 'text-red-600 bg-red-100';
+                default: return 'text-gray-600 bg-gray-100';
+            }
+        };
+
+        const getStatusText = (status) => {
+            switch (status) {
+                case 'pending': return '待处理';
+                case 'accepted': return '已接受';
+                case 'rejected': return '已拒绝';
+                default: return '未知';
+            }
+        };
+
+        return (
+            <div className="bg-white p-6 rounded-lg shadow-md animate-fadeIn">
+                <div className="flex justify-between items-center mb-6 pb-4 border-b">
+                    <h2 className="text-2xl font-semibold text-gray-700 flex items-center">
+                        <span className="mr-3 text-2xl">📋</span>预约请求管理
+                    </h2>
+                    <div className="flex items-center gap-2">
+                        <select 
+                            value={filter} 
+                            onChange={(e) => setFilter(e.target.value)}
+                            className="px-3 py-1 border rounded-md text-sm"
+                        >
+                            <option value="all">全部</option>
+                            <option value="pending">待处理</option>
+                            <option value="accepted">已接受</option>
+                            <option value="rejected">已拒绝</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div className="space-y-4">
+                    {filteredRequests.length > 0 ? (
+                        filteredRequests.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt)).map(request => (
+                            <div key={request.id} className="border rounded-lg p-4 hover:shadow-md transition-shadow">
+                                <div className="flex justify-between items-start mb-3">
+                                    <div>
+                                        <h3 className="text-lg font-semibold text-gray-800">{request.clientName}</h3>
+                                        <p className="text-sm text-gray-600">请求时间: {request.createdAt}</p>
+                                    </div>
+                                    <span className={`px-3 py-1 rounded-full text-sm font-medium ${getStatusColor(request.status)}`}>
+                                        {getStatusText(request.status)}
+                                    </span>
+                                </div>
+                                
+                                {request.message && (
+                                    <div className="mb-3 p-3 bg-gray-50 rounded-md">
+                                        <p className="text-sm text-gray-700">{request.message}</p>
+                                    </div>
+                                )}
+
+                                {request.status === 'pending' && (
+                                    <div className="flex gap-3">
+                                        <button 
+                                            onClick={() => handleResponse(request.id, 'accept')}
+                                            className="px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-md text-sm font-medium"
+                                        >
+                                            接受
+                                        </button>
+                                        <button 
+                                            onClick={() => handleResponse(request.id, 'reject')}
+                                            className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-md text-sm font-medium"
+                                        >
+                                            拒绝
+                                        </button>
+                                    </div>
+                                )}
+
+                                {request.status !== 'pending' && request.respondedAt && (
+                                    <div className="mt-3 pt-3 border-t">
+                                        <p className="text-sm text-gray-600">
+                                            <strong>处理时间:</strong> {request.respondedAt}
+                                        </p>
+                                        {request.response && (
+                                            <p className="text-sm text-gray-600 mt-1">
+                                                <strong>回复:</strong> {request.response}
+                                            </p>
+                                        )}
+                                    </div>
+                                )}
+                            </div>
+                        ))
+                    ) : (
+                        <div className="text-center py-8">
+                            <p className="text-gray-500">
+                                {filter === 'all' ? '暂无预约请求' : `暂无${getStatusText(filter)}的请求`}
+                            </p>
+                        </div>
+                    )}
+                </div>
+            </div>
+        );
+    };
+
     const CBTSection = ({ showAlert }) => {
       return (
           <div className="bg-white p-6 rounded-lg shadow-md animate-fadeIn max-w-4xl mx-auto">
@@ -1902,6 +2234,115 @@
               </div>
           </div>
       );
+    };
+    
+    const InterviewSection = ({ user, showAlert }) => {
+        const { useState, useEffect, useRef } = React;
+        const [messages, setMessages] = useState([]);
+        const [input, setInput] = useState('');
+        const [isLoading, setIsLoading] = useState(false);
+        const [sessionId, setSessionId] = useState(`interview-${user.username}-${Date.now()}`);
+        const chatEndRef = useRef(null);
+
+        useEffect(() => {
+            // Initial message from the bot
+            setMessages([{
+                sender: 'bot',
+                text: "您好，欢迎参与这次对谈。接下来，我会通过12个开放性的问题，与您一同梳理和探索您近期的感受与经历。这个过程是为了帮助您进行自我觉察，并生成一份简要的分析报告，同时帮助您选择适合的咨询师。答案没有对错之分，请您放松并坦诚地分享任何您想分享的事情。整个对话是完全保密的，请放心。那么，如果你准备好了请告诉我，我们就可以开始了。"
+            }]);
+        }, []);
+
+        useEffect(() => {
+            chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+        }, [messages]);
+
+        const handleSendMessage = async (e) => {
+            e.preventDefault();
+            if (!input.trim()) return;
+
+            const userMessage = { sender: 'user', text: input };
+            setMessages(prev => [...prev, userMessage]);
+            setInput('');
+            setIsLoading(true);
+
+            try {
+                const response = await fetch('/api/interview/chat', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        history: [...messages, userMessage].map(m => ({ sender: m.sender, text: m.text })),
+                        message: input
+                    })
+                });
+
+                if (response.ok) {
+                    const data = await response.json();
+                    const botMessage = { sender: 'bot', text: data.response };
+                    setMessages(prev => [...prev, botMessage]);
+                } else {
+                    try {
+                        const error = await response.json();
+                        showAlert(`发送失败：${error.message || error.error || '未知错误'}`);
+                    } catch (parseError) {
+                        showAlert(`发送失败：服务器错误 (状态码: ${response.status})`);
+                    }
+                    const errorMessage = { sender: 'bot', text: "抱歉，我暂时无法回复，请稍后再试。" };
+                    setMessages(prev => [...prev, errorMessage]);
+                }
+            } catch (error) {
+                showAlert('发送失败：网络错误');
+                const errorMessage = { sender: 'bot', text: "抱歉，网络连接似乎有问题，请稍后再试。" };
+                setMessages(prev => [...prev, errorMessage]);
+            } finally {
+                setIsLoading(false);
+            }
+        };
+        
+        return (
+            <div className="bg-white p-6 rounded-lg shadow-md animate-fadeIn max-w-3xl mx-auto">
+                <h2 className="text-2xl font-semibold text-gray-700 mb-6 pb-4 border-b flex items-center">
+                    <span className="mr-3 text-2xl">💬</span>初始访谈
+                </h2>
+                <div className="h-[60vh] overflow-y-auto p-4 bg-gray-50 rounded-lg flex flex-col space-y-4">
+                    {messages.map((msg, index) => (
+                        <div key={index} className={`flex ${msg.sender === 'user' ? 'justify-end' : 'justify-start'}`}>
+                            <div className={`max-w-md p-3 rounded-lg ${msg.sender === 'user' ? 'bg-blue-500 text-white' : 'bg-gray-200 text-gray-800'}`}>
+                                <p className="text-sm" style={{whiteSpace: 'pre-wrap'}}>{msg.text}</p>
+                            </div>
+                        </div>
+                    ))}
+                    {isLoading && (
+                        <div className="flex justify-start">
+                             <div className="max-w-md p-3 rounded-lg bg-gray-200 text-gray-800">
+                                <div className="animate-pulse flex space-x-2">
+                                    <div className="rounded-full bg-gray-400 h-2 w-2"></div>
+                                    <div className="rounded-full bg-gray-400 h-2 w-2"></div>
+                                    <div className="rounded-full bg-gray-400 h-2 w-2"></div>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+                    <div ref={chatEndRef} />
+                </div>
+                <form onSubmit={handleSendMessage} className="mt-4 flex items-center">
+                    <input 
+                        type="text"
+                        value={input}
+                        onChange={(e) => setInput(e.target.value)}
+                        placeholder="输入您的回答..."
+                        className="flex-grow p-3 border rounded-l-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                        disabled={isLoading}
+                    />
+                    <button 
+                        type="submit" 
+                        className="bg-blue-600 hover:bg-blue-700 text-white font-semibold py-3 px-6 rounded-r-lg"
+                        disabled={isLoading}
+                    >
+                        {isLoading ? '...' : '发送'}
+                    </button>
+                </form>
+            </div>
+        );
     };
     
     // Check if all dependencies are loaded before rendering
