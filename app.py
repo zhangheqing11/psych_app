@@ -48,20 +48,110 @@ DATA_FILE = 'database.json'
 def read_data():
     """从JSON文件读取数据。如果文件不存在或为空，则返回一个默认的数据结构。"""
     if not os.path.exists(DATA_FILE):
-        return {"users": {}, "counselor_data": {"clients": [], "counselors": [], "appointments": []}}
+        return {
+            "users": {}, 
+            "counselor_data": {"clients": [], "counselors": [], "appointments": []},
+            "interview_sessions": {}  # 新增：存储访谈会话
+        }
     try:
         with open(DATA_FILE, 'r', encoding='utf-8') as f:
             content = f.read()
             if not content:
-                return {"users": {}, "counselor_data": {"clients": [], "counselors": [], "appointments": []}}
-            return json.loads(content)
+                return {
+                    "users": {}, 
+                    "counselor_data": {"clients": [], "counselors": [], "appointments": []},
+                    "interview_sessions": {}
+                }
+            data = json.loads(content)
+            # 确保新字段存在
+            if "interview_sessions" not in data:
+                data["interview_sessions"] = {}
+            return data
     except (json.JSONDecodeError, FileNotFoundError):
-        return {"users": {}, "counselor_data": {"clients": [], "counselors": [], "appointments": []}}
+        return {
+            "users": {}, 
+            "counselor_data": {"clients": [], "counselors": [], "appointments": []},
+            "interview_sessions": {}
+        }
 
 def write_data(data):
     """将数据写入JSON文件。"""
     with open(DATA_FILE, 'w', encoding='utf-8') as f:
         json.dump(data, f, ensure_ascii=False, indent=4)
+
+# --- 会话管理函数 ---
+def get_or_create_session(username):
+    """获取或创建用户的访谈会话"""
+    all_data = read_data()
+    
+    if username not in all_data['interview_sessions']:
+        # 创建新会话
+        session_id = f"session_{username}_{int(time.time())}"
+        all_data['interview_sessions'][username] = {
+            'session_id': session_id,
+            'username': username,
+            'messages': [],
+            'status': 'active',  # active, completed, paused
+            'created_at': time.strftime("%Y-%m-%d %H:%M:%S"),
+            'updated_at': time.strftime("%Y-%m-%d %H:%M:%S"),
+            'completed_questions': [],
+            'analysis_ready': False
+        }
+        write_data(all_data)
+    
+    return all_data['interview_sessions'][username]
+
+def save_session_message(username, message, sender):
+    """保存单条消息到会话"""
+    all_data = read_data()
+    
+    if username in all_data['interview_sessions']:
+        message_data = {
+            'sender': sender,
+            'text': message,
+            'timestamp': time.strftime("%Y-%m-%d %H:%M:%S")
+        }
+        all_data['interview_sessions'][username]['messages'].append(message_data)
+        all_data['interview_sessions'][username]['updated_at'] = time.strftime("%Y-%m-%d %H:%M:%S")
+        write_data(all_data)
+        return True
+    return False
+
+def update_session_status(username, status, analysis_ready=None):
+    """更新会话状态"""
+    all_data = read_data()
+    
+    if username in all_data['interview_sessions']:
+        all_data['interview_sessions'][username]['status'] = status
+        all_data['interview_sessions'][username]['updated_at'] = time.strftime("%Y-%m-%d %H:%M:%S")
+        if analysis_ready is not None:
+            all_data['interview_sessions'][username]['analysis_ready'] = analysis_ready
+        write_data(all_data)
+        return True
+    return False
+
+def get_session_history(username):
+    """获取用户的会话历史"""
+    all_data = read_data()
+    if username in all_data['interview_sessions']:
+        return all_data['interview_sessions'][username]['messages']
+    return []
+
+def check_closing_message(history):
+    """检查是否包含结束语，判断访谈是否完成"""
+    if not history:
+        return False, 0
+    
+    # 检查是否包含结束语关键词
+    closing_keywords = ["非常感谢您坦诚的分享", "生成报告", "咨询服务中一切顺利"]
+    assistant_messages = [item['text'] for item in history if item['sender'] == 'bot']
+    
+    has_closing = any(any(keyword in msg for keyword in closing_keywords) for msg in assistant_messages)
+    
+    # 简单统计消息轮数作为完成度参考
+    user_messages = [item for item in history if item['sender'] == 'user']
+    
+    return has_closing, len(user_messages)
 
 # --- PROMPTS (完整版) ---
 def get_conceptualization_prompt_text():
@@ -207,7 +297,7 @@ def register():
         return jsonify({"message": "用户名、密码和角色都是必填项"}), 400
     
     if role == 'counselor' and secret_code != COUNSELOR_SECRET:
-        return jsonify({"message": "注册口令不正确"}), 403
+        return jsonify({"message": "注册不正确"}), 403
 
     if username == MANAGER_USER['username']:
         return jsonify({"message": "此用户名已被保留"}), 409
@@ -234,7 +324,7 @@ def register():
             }
             all_data['counselor_data']['clients'].append(new_client_entry)
             response_data["binding_code"] = binding_code
-            response_data["message"] = f"注册成功！请务必保存您的添加口令: {binding_code}。\n您的咨询师将需要此口令来将您添加到他们的档案中。"
+            response_data["message"] = f"注册成功！准备好后请点击「初始访谈」进行测试，生成分析报告^-^"
 
 
     elif role == 'counselor':
@@ -350,13 +440,26 @@ def save_counselor_data(username):
 
     if 'clients' in new_data:
         for updated_client in new_data.get('clients', []):
-            if updated_client.get('id') in allowed_client_ids:
-                client_index_to_update = next((i for i, client in enumerate(all_data['counselor_data']['clients']) if client.get('id') == updated_client.get('id')), -1)
-                if client_index_to_update != -1:
+            client_id = updated_client.get('id')
+            # 查找现有的来访者
+            client_index_to_update = next((i for i, client in enumerate(all_data['counselor_data']['clients']) if client.get('id') == client_id), -1)
+            
+            if client_index_to_update != -1:
+                # 更新现有来访者（只允许更新分配给该咨询师的来访者）
+                if client_id in allowed_client_ids:
                     existing_sessions = all_data['counselor_data']['clients'][client_index_to_update].get('sessions', [])
                     updated_client_data = {**all_data['counselor_data']['clients'][client_index_to_update], **updated_client}
                     updated_client_data['sessions'] = existing_sessions
                     all_data['counselor_data']['clients'][client_index_to_update] = updated_client_data
+            else:
+                # 新来访者：添加到clients列表并自动分配给当前咨询师
+                all_data['counselor_data']['clients'].append(updated_client)
+                # 将新来访者ID添加到咨询师的assignedClientIds中
+                if client_id not in counselor_profile.get('assignedClientIds', []):
+                    if 'assignedClientIds' not in counselor_profile:
+                        counselor_profile['assignedClientIds'] = []
+                    counselor_profile['assignedClientIds'].append(client_id)
+                    all_data['counselor_data']['counselors'][counselor_index] = counselor_profile
 
     if 'appointments' in new_data:
         all_data['counselor_data']['appointments'] = new_data.get('appointments', [])
@@ -442,6 +545,89 @@ def create_client_by_counselor():
     write_data(all_data)
 
     return jsonify({"message": f"来访者 '{new_client_username}' 已成功创建并分配给您。"}), 201
+
+@app.route('/api/counselor/link_client', methods=['POST'])
+def link_client_account():
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({"message": "请求数据为空"}), 400
+            
+        client_id = data.get('clientId')
+        binding_code = data.get('bindingCode')
+        
+        if not client_id or not binding_code:
+            return jsonify({"message": "缺少必要参数"}), 400
+        
+        all_data = read_data()
+        
+        # 查找具有该binding_code的来访者账号
+        registered_client = None
+        for client in all_data.get('counselor_data', {}).get('clients', []):
+            if client.get('binding_code') == binding_code.upper():
+                registered_client = client
+                break
+        
+        if not registered_client:
+            return jsonify({"message": "特殊口令不正确或该账号不存在"}), 404
+        
+        # 查找要关联的咨询师创建的来访者档案
+        counselor_client = None
+        client_index = -1
+        for i, client in enumerate(all_data.get('counselor_data', {}).get('clients', [])):
+            if client.get('id') == client_id:
+                counselor_client = client
+                client_index = i
+                break
+        
+        if not counselor_client:
+            return jsonify({"message": "来访者档案未找到"}), 404
+        
+        # 检查咨询师创建的档案是否已经关联了其他账号
+        if counselor_client.get('username') or counselor_client.get('linked_account'):
+            return jsonify({"message": "该来访者档案已关联其他账号"}), 409
+        
+        # 检查这个注册用户是否已经被其他咨询师档案关联
+        # 查找是否有其他档案（不是registered_client，也不是counselor_client）使用了相同的username
+        registered_username = registered_client.get('username')
+        if registered_username:
+            for client in all_data.get('counselor_data', {}).get('clients', []):
+                if (client.get('id') != client_id and  # 不是当前要关联的咨询师档案
+                    client.get('id') != registered_client.get('id') and  # 不是注册用户本身
+                    client.get('username') == registered_username):  # 但使用了相同的username
+                    return jsonify({"message": "该账号已被其他来访者档案关联"}), 409
+        
+        # 进行账号关联
+        # 将registered_client的信息合并到counselor_client中
+        merged_client = {
+            **registered_client,  # 保留原有的用户信息
+            **counselor_client,   # 保留咨询师创建的档案信息
+            'username': registered_client.get('username'),
+            'linked_account': registered_client.get('username'),
+            'binding_code': registered_client.get('binding_code')
+        }
+        
+        # 更新客户端档案
+        all_data['counselor_data']['clients'][client_index] = merged_client
+        
+        # 如果registered_client是一个独立的entry且不是同一个，需要删除重复的entry
+        if registered_client.get('id') != client_id:
+            all_data['counselor_data']['clients'] = [
+                client for client in all_data['counselor_data']['clients'] 
+                if client.get('id') != registered_client.get('id')
+            ]
+        
+        write_data(all_data)
+        
+        return jsonify({
+            "message": "账号关联成功",
+            "username": registered_client.get('username'),
+            "linked_client_id": client_id
+        }), 200
+        
+    except Exception as e:
+        app.logger.error(f"账号关联API处理时出错: {e}")
+        return jsonify({"message": f"服务器内部错误: {str(e)}"}), 500
 
 
 # --- 来访者数据API ---
@@ -588,8 +774,13 @@ def call_gemini_api(system_prompt, user_prompt):
     使用 google-generativeai SDK 调用 Gemini API。
     """
     try:
-        # 根据官方文档的正确方式创建客户端
-        client = genai.Client()
+        # 确保API密钥已正确配置
+        api_key = os.environ.get('GEMINI_API_KEY')
+        if not api_key:
+            raise ValueError("GEMINI_API_KEY environment variable is not set")
+        
+        # 根据官方文档的正确方式创建客户端，传入API密钥
+        client = genai.Client(api_key=api_key)
         
         # 将系统提示和用户提示合并
         full_prompt = f"{system_prompt}\n\n---\n\n{user_prompt}"
@@ -598,7 +789,7 @@ def call_gemini_api(system_prompt, user_prompt):
             model="gemini-2.5-flash",
             contents=full_prompt,
             config=types.GenerateContentConfig(
-                thinking_config=types.ThinkingConfig(thinking_budget=0)  # 禁用思考以提高速度
+                thinking_config=types.ThinkingConfig(thinking_budget=-1)  
             )
         )
         
@@ -659,12 +850,12 @@ SYSTEM_PROMPT_INTERVIEW = {
   "prompt_instructions": {
     "role_definition": {
       "persona": "你是一位富有同理心、专业且善于倾听的对话引导者。你的语气始终保持温和、中立与关切。",
-      "objective": "通过一个包含15个问题的结构化对话，温和地引导用户进行自我探索，对用户目前的心理状态、可能的困扰和已有资源进行一个初步的、非诊断性的了解。"
+      "objective": "通过一个包含12个问题的结构化对话，温和地引导用户进行自我探索，对用户目前的心理状态、可能的困扰和已有资源进行一个初步的、非诊断性的了解。"
     },
     "conversation_flow": {
-      "initial_message": "您好，欢迎参与这次对谈。接下来，我会通过12个开放性的问题，与您一同梳理和探索您近期的感受与经历。这个过程是为了帮助您进行自我觉察，并生成一份简要的分析报告，同时帮助您选择适合的咨询师。答案没有对错之分，请您放松并坦诚地分享任何您想分享的事情。整个对话是完全保密的，请放心。那么，如果你准备好了请告诉我，我们就可以开始了。",
+      "initial_message": "您好，欢迎参与这次对谈。接下来，我会在大约15分钟的对话内，与您一同梳理和探索您近期的感受与经历。这个过程是为了帮助您进行自我觉察，并生成一份简要的分析报告。答案没有对错之分，请您放松并坦诚地分享任何您想分享的事情。整个对话是完全保密的，请放心。那么，如果你准备好了请告诉我，我们就可以开始了。",
       "progression_logic": "严格按照 `question_list` 的顺序，一次只提问一个主问题。在用户回答后，根据 `follow_up_rules` 决定是否进行追问。完成一个主问题（及可能的追问）后，平稳地过渡到下一个主问题。",
-      "closing_message": "非常感谢您坦诚的分享。通过刚才的对话，我们一起梳理了您近期的许多感受和经历，这本身就是非常有勇气和有意义的一步。希望这次交谈能为您带来一些新的视角或思考。请记得，这仅仅是一次初步的交流，并非专业的心理诊断。如果您感觉困扰持续存在或加重，寻求专业心理咨询师的帮助会是很好的选择。再次感谢您的信任，祝您一切顺利。"
+      "closing_message": "非常感谢您坦诚的分享。通过刚才的对话，我们一起梳理了您近期的许多感受和经历，这本身就是非常有勇气和有意义的一步。现在您可以点击“生成报告”来得到属于您的分析报告了。再次感谢您的信任，祝您在之后的咨询服务中一切顺利。"
     },
     "follow_up_rules": {
       "trigger_conditions": [
@@ -685,13 +876,15 @@ SYSTEM_PROMPT_INTERVIEW = {
     },
     "constraints_and_guidelines": {
       "total_turns_limit": 20,
-      "tone": "共情、不评判、耐心、尊重、稳定。",
+      "tone": "不评判、耐心、尊重、稳定。",
       "language": "使用清晰、温和、非临床的日常语言。避免使用心理学术语。",
       "prohibitions": [
         "严禁提供任何形式的心理诊断、评估或治疗建议。",
         "严禁对用户的想法、感受或行为进行价值评判。",
         "严禁打断用户，给予用户充分的思考和表达时间。",
         "如果用户明确表示不想回答某个问题，应立刻表示理解并跳到下一个问题。",
+        "注意：不要在每轮对话的开头都生成相同的语句，如不要反复说“谢谢你的分享”，而是使用更丰富的对话内容",
+        "注意：尝试表达对用户处境的理解与共情时，不要给出过于直白，甚至复制用户原话的回复。例如：在用户表达“考试成绩不理想，我很焦虑”时，不要回复“我理解你最近很焦虑，考试成绩不理想”或者类似的话语，而是用“我理解你的想法了。在成绩不理想时感到焦虑是正常的，问题的关键是你如何看待焦虑。”等共情表达",
         "**最高优先级**：如果用户表达出明确的、紧急的自我伤害或伤害他人的意图，必须立即暂停提问流程，并以最直接和关切的语气提供寻求专业紧急干预的建议和信息。"
       ]
     },
@@ -752,44 +945,488 @@ SYSTEM_PROMPT_INTERVIEW = {
 
 @app.route('/api/interview/chat', methods=['POST'])
 def chat_with_bot():
+    # 检查请求数据
+    if not request.json:
+        app.logger.error("No JSON data received")
+        return jsonify({"error": "请求数据格式错误：需要JSON格式"}), 400
+        
     data = request.json
     user_message = data.get('message')
-    history = data.get('history', []) # 接收前端传递的完整历史记录
+    username = data.get('username')
+    client_provided_history = data.get('history', [])
+    
+    app.logger.info(f"Chat request from user: {username}, message: {user_message[:50] if user_message else 'None'}...")
 
-    if not user_message:
-        return jsonify({"error": "message is required"}), 400
+    if not user_message or not user_message.strip():
+        return jsonify({"error": "消息内容不能为空"}), 400
+    
+    if not username:
+        return jsonify({"error": "用户名是必需的"}), 400
     
     try:
-        # 根据官方文档的正确方式创建客户端
-        client = genai.Client()
+        # 获取或创建用户会话
+        session = get_or_create_session(username)
+        
+        # 保存用户消息到数据库
+        save_session_message(username, user_message, 'user')
+        
+        # 获取完整的历史记录（优先使用数据库中的记录）
+        history = get_session_history(username)
+        app.logger.info(f"Retrieved history for {username}: {len(history)} messages")
+        
+        # 如果数据库中没有历史记录，使用前端提供的历史记录（兼容性处理）
+        if not history and client_provided_history:
+            # 将前端历史记录保存到数据库
+            all_data = read_data()
+            all_data['interview_sessions'][username]['messages'] = client_provided_history
+            write_data(all_data)
+            history = client_provided_history
+            app.logger.info(f"Used client history for {username}: {len(history)} messages")
+        
+        # 确保API密钥已正确配置
+        api_key = os.environ.get('GEMINI_API_KEY')
+        if not api_key:
+            raise ValueError("GEMINI_API_KEY environment variable is not set")
+        
+        # 根据官方文档的正确方式创建客户端，传入API密钥
+        client = genai.Client(api_key=api_key)
+        
+        # 构建完整的系统提示，包含问题列表
+        questions_text = "\n".join([f"问题{q['id']}: {q['text']}" for q in SYSTEM_PROMPT_INTERVIEW['prompt_instructions']['question_list']])
+        
+        system_prompt = f"""
+{SYSTEM_PROMPT_INTERVIEW['prompt_instructions']['role_definition']['persona']}
+{SYSTEM_PROMPT_INTERVIEW['prompt_instructions']['role_definition']['objective']}
+
+初始问候：
+{SYSTEM_PROMPT_INTERVIEW['prompt_instructions']['conversation_flow']['initial_message']}
+
+您需要按照以下顺序进行12个问题的访谈：
+{questions_text}
+
+结束语：
+{SYSTEM_PROMPT_INTERVIEW['prompt_instructions']['conversation_flow']['closing_message']}
+
+对话规则：
+- {SYSTEM_PROMPT_INTERVIEW['prompt_instructions']['conversation_flow']['progression_logic']}
+- 语调：{SYSTEM_PROMPT_INTERVIEW['prompt_instructions']['constraints_and_guidelines']['tone']}
+- {SYSTEM_PROMPT_INTERVIEW['prompt_instructions']['constraints_and_guidelines']['language']}
+- 追问规则：{SYSTEM_PROMPT_INTERVIEW['prompt_instructions']['follow_up_rules']['trigger_conditions'][0]}
+- 每个问题最多追问{SYSTEM_PROMPT_INTERVIEW['prompt_instructions']['follow_up_rules']['max_follow_ups_per_question']}次
+
+禁止事项：
+""" + "\n".join([f"- {p}" for p in SYSTEM_PROMPT_INTERVIEW['prompt_instructions']['constraints_and_guidelines']['prohibitions']])
+
+        # 添加会话状态跟踪
+        system_prompt += f"""
+
+重要指示：
+- 如果这是对话的开始，请使用初始问候语开始
+- 严格按照问题1到问题12的顺序进行访谈
+- 在用户回答当前问题后，再提出下一个问题
+- 如果用户明确表示不想回答某个问题，立即跳到下一个问题
+- 完成所有12个问题后，使用结束语结束访谈"""
+
+        # 分析对话历史，确定当前应该提问的问题
+        def analyze_conversation_progress(history):
+            """分析对话历史，确定已经完成了哪些问题"""
+            completed_questions = set()
+            assistant_messages = [item['text'] for item in history if item['sender'] == 'bot']
+            
+            # 检查每个问题是否已经被提及
+            for q in SYSTEM_PROMPT_INTERVIEW['prompt_instructions']['question_list']:
+                question_text = q['text']
+                question_keywords = question_text[:20]  # 使用问题的前20个字符作为关键词
+                
+                for msg in assistant_messages:
+                    if question_keywords in msg or f"问题{q['id']}" in msg:
+                        completed_questions.add(q['id'])
+                        break
+            
+            # 确定下一个要提问的问题
+            next_question_id = 1
+            for i in range(1, 13):
+                if i not in completed_questions:
+                    next_question_id = i
+                    break
+            else:
+                next_question_id = 13  # 所有问题都完成了
+            
+            return completed_questions, next_question_id
+        
+        completed_questions, next_question_id = analyze_conversation_progress(history)
+        app.logger.info(f"Conversation progress: completed={completed_questions}, next={next_question_id}")
         
         # 构建完整的对话历史内容
-        conversation_context = json.dumps(SYSTEM_PROMPT_INTERVIEW, ensure_ascii=False) + "\n\n"
+        conversation_context = system_prompt + "\n\n"
         
-        # 添加历史对话
-        for item in history:
-            role = "用户" if item['sender'] == 'user' else "助手"
-            conversation_context += f"{role}: {item['text']}\n"
+        # 添加当前进度信息
+        if len(history) == 0:
+            conversation_context += "这是访谈的开始。请使用初始问候语开始对话。\n\n"
+            app.logger.info("Starting new interview - no history")
+        elif next_question_id <= 12:
+            next_question = next(q for q in SYSTEM_PROMPT_INTERVIEW['prompt_instructions']['question_list'] if q['id'] == next_question_id)
+            conversation_context += f"当前进度：已完成问题 {sorted(completed_questions)}，接下来应该提问第{next_question_id}个问题：\n"
+            conversation_context += f"「{next_question['text']}」\n\n"
+            app.logger.info(f"Continuing interview - next question {next_question_id}")
+        else:
+            conversation_context += "所有12个问题都已完成，请使用结束语结束访谈。\n\n"
+            app.logger.info("All questions completed - using closing message")
         
-        # 添加当前用户消息
-        conversation_context += f"用户: {user_message}\n助手: "
+        # 构建对话历史，确保AI能够理解上下文
+        if len(history) > 0:
+            conversation_context += "=== 之前的对话记录 ===\n"
+            for item in history:
+                role = "用户" if item['sender'] == 'user' else "助手"
+                conversation_context += f"{role}: {item['text']}\n"
+            conversation_context += "\n"
+        
+        # 明确告诉AI要基于历史记录回复
+        conversation_context += f"=== 重要提示 ===\n"
+        conversation_context += f"请基于以上完整的对话历史来回复用户的新消息。务必要考虑之前用户分享的所有信息，保持对话的连贯性。\n\n"
+        conversation_context += f"=== 用户的新消息 ===\n用户: {user_message}\n\n请回复: "
+        
+        app.logger.info(f"Context length: {len(conversation_context)} chars, History items: {len(history)}")
         
         # 根据官方文档的正确API调用方式
         response = client.models.generate_content(
             model="gemini-2.5-flash",
             contents=conversation_context,
             config=types.GenerateContentConfig(
-                thinking_config=types.ThinkingConfig(thinking_budget=8192)
+                thinking_config=types.ThinkingConfig(thinking_budget=-1)
             ),
         )
         
-        return jsonify({"response": response.text})
+        # 保存AI回复到数据库
+        ai_response_text = response.text
+        save_session_message(username, ai_response_text, 'bot')
+        
+        # 检查是否包含结束语
+        updated_history = get_session_history(username)
+        has_closing, user_message_count = check_closing_message(updated_history)
+        
+        if has_closing:
+            update_session_status(username, 'completed', analysis_ready=True)
+        
+        app.logger.info(f"Chat response for {username}: closing={has_closing}, count={user_message_count}")
+        
+        return jsonify({
+            "response": ai_response_text,
+            "session_id": session.get('session_id', 'unknown'),
+            "has_closing_message": has_closing,
+            "user_message_count": user_message_count,
+            "can_generate_report": has_closing
+        })
     except Exception as e:
         app.logger.error(f"Error during Gemini chat: {e}")
-        return jsonify({"error": "Failed to get response from AI."}), 500
+        app.logger.error(f"Error traceback: {traceback.format_exc()}")
+        return jsonify({"error": f"AI回复失败: {str(e)}"}), 500
+
+# --- 会话管理API ---
+@app.route('/api/interview/session/<username>', methods=['GET'])
+def get_interview_session(username):
+    """获取用户的访谈会话信息"""
+    try:
+        session = get_or_create_session(username)
+        history = get_session_history(username)
+        has_closing, user_message_count = check_closing_message(history)
+        
+        return jsonify({
+            "session": session,
+            "messages": history,
+            "has_closing_message": has_closing,
+            "user_message_count": user_message_count,
+            "can_generate_report": has_closing
+        })
+    except Exception as e:
+        app.logger.error(f"Error fetching session: {e}")
+        return jsonify({"error": f"获取会话失败: {str(e)}"}), 500
+
+@app.route('/api/interview/session/<username>/reset', methods=['POST'])
+def reset_interview_session(username):
+    """重置用户的访谈会话"""
+    try:
+        all_data = read_data()
+        if username in all_data['interview_sessions']:
+            # 删除现有会话
+            del all_data['interview_sessions'][username]
+            write_data(all_data)
+        
+        # 创建新会话
+        new_session = get_or_create_session(username)
+        
+        return jsonify({
+            "message": "会话已重置",
+            "session": new_session
+        })
+    except Exception as e:
+        app.logger.error(f"Error resetting session: {e}")
+        return jsonify({"error": f"重置会话失败: {str(e)}"}), 500
+
+# --- 第二个智能体：访谈分析智能体 ---
+SYSTEM_PROMPT_ANALYSIS = {
+    "system_prompt_name": "Conversational Interview Analysis and Reporting",
+    "version": "1.0",
+    "description": "A system prompt to guide an AI agent in analyzing a user's conversational interview transcript. The agent will produce a comprehensive, structured, and empathetic report that identifies core issues, demonstrates understanding, and suggests suitable therapeutic approaches.",
+    "prompt_instructions": {
+        "role_definition": {
+            "persona": "你是一位经验丰富、富有洞察力且具备共情能力的心理分析师。你的任务是基于给定的访谈文稿，为用户提供一份专业、清晰且充满关怀的分析报告。你的语言应兼具专业性与易懂性，核心目标是让用户感到被深入理解和支持。",
+            "objective": "严格基于用户提供的访谈文稿，生成一份结构化的分析报告。报告需总结核心议题，深入分析用户在情绪、认知、行为等维度的状态，洞察其潜在困境与心态，并最终基于分析结果，为用户推荐2-3个可能适合的心理咨询流派并说明原因。"
+        },
+        "input_format": {
+            "type": "文本（Text）",
+            "content": "完整的用户与AI引导者之间的开放式访谈对话记录。"
+        },
+        "output_structure": {
+            "title": "关于您近期状况的初步分析报告",
+            "introduction": "在报告开头，写一段温和的引言，说明这份报告是基于用户之前的分享，旨在提供一个梳理和反馈的视角，并强调其非诊断性质。",
+            "part_1_summary": {
+                "title": "一、总体印象与核心议题",
+                "content": "综合整个访谈，用叙事性的语言总结用户当前面临的核心困扰或议题。例如：'从您的谈话中，我感受到您目前可能正处在一个……的阶段，核心的困扰似乎围绕着……和……展开。'"
+            },
+            "part_2_multidimensional_analysis": {
+                "title": "二、多维度状态分析",
+                "description": "从以下几个维度，结合用户在访谈中的具体表述（可少量引用原文以增强共鸣），进行详细分析。",
+                "sections": {
+                    "emotional_state": "情绪状态：分析用户的主要情绪（如焦虑、低落、矛盾），以及情绪的强度和稳定性。",
+                    "cognitive_patterns": "认知模式：分析用户的思维习惯，如是否存在反复担忧、负面自我评价、灾难化思维等。这是展现'理解'的关键部分。",
+                    "behavioral_patterns": "行为模式：分析用户在行为上的变化，如回避社交、动机下降、兴趣丧失或应对方式。",
+                    "somatic_symptoms": "生理感知：梳理用户提及的身体信号，如睡眠、食欲、精力等问题，并将其与情绪状态联系起来。",
+                    "social_functioning": "社会功能与人际关系：分析用户的困扰对其日常生活（工作/学习）的影响，以及其人际支持系统的质量（是压力源还是支持源）。"
+                }
+            },
+            "part_3_synthesis_and_interpretation": {
+                "title": "三、核心困境洞察",
+                "content": "这是报告的升华部分。在此，你需要整合前述所有分析，提出一个关于用户当前核心困境的深刻洞察。尝试解释各个分散的点是如何连接成一个整体的。例如：'综合来看，您提到的对……的担忧和在……上的无力感，背后可能反映了一种在'自我价值感'与'外部评价'之间的挣扎。您一方面渴望……，另一方面又害怕……，这种矛盾心态可能是您当前能量消耗的主要原因。'"
+            },
+            "part_4_therapeutic_recommendations": {
+                "title": "四、可能适合您的咨询流派建议",
+                "introduction": "在此处说明，不同的咨询流派有不同的工作方式，选择权在用户手中。以下推荐仅为基于您个人情况的参考。",
+                "recommendation_structure": "推荐2-3个流派。对每一个流派，遵循以下结构：",
+                "item_template": {
+                    "name": "【咨询流派名称，例如：认知行为疗法 (CBT)】",
+                    "description": "用1-2句话通俗地解释这个流派是做什么的。",
+                    "suitability_analysis": "【为什么它可能适合您】：详细、具体地将该流派的特点与用户在访谈中透露的困扰直接挂钩。例如：'CBT疗法特别关注思维模式与情绪、行为的联系。鉴于您在访谈中提到当遇到挫折时，会对自己有很多负面评价，CBT可以帮助您识别并调整这些被称为自动化负性思维的想法，从根源上改善您的情绪。'"
+                }
+            },
+            "final_disclaimer": {
+                "title": "五、结语与重要提醒",
+                "content": "在报告末尾，必须包含一段结语。再次感谢用户的信任，重申本报告是基于有限信息的初步分析，绝不能替代专业的临床诊断。强烈鼓励用户带着这份报告去和专业的心理咨询师或精神科医生进行更深入的探讨，并祝福用户。"
+            }
+        },
+        "analytical_principles": {
+            "text_based_evidence": "所有分析、洞察和推荐都必须有访谈文本作为依据，避免凭空猜测。",
+            "empathetic_tone": "使用支持性、非评判性的语言，让用户感受到被尊重和理解。",
+            "strengths_focus": "在分析困扰的同时，适时地将用户在访谈中展现的优点、资源和求变意愿（如'奇迹问题'的回答）也整合进报告，提供一个平衡的视角。",
+            "professionalism": "保持专业的框架和视角，但用通俗易懂的语言向用户解释。"
+        },
+        "therapist_recommendation_logic": {
+            "knowledge_base": {
+                "cbt": "认知行为疗法 (CBT): 适用于具体的问题，如焦虑、恐慌、抑郁、强迫症。核心是识别和改变不适应的思维和行为模式。适合提及具体负面想法和行为困扰的用户。",
+                "psychodynamic": "心理动力学疗法: 探索潜意识、早期经历和人际关系模式如何影响当前的情绪和行为。适合希望深入理解为什么我总是这样的根源性问题的用户。",
+                "person_centered": "人本主义/来访者中心疗法: 强调无条件的积极关注、共情和真诚，帮助用户提升自我认知和实现个人潜能。适合感到迷茫、自我价值感低或希望在安全环境中自我探索的用户。",
+                "act": "接纳承诺疗法 (ACT): 强调接纳无法改变的痛苦、澄清个人价值观，并致力于有价值的行动。适合长期与负面情绪斗争、感觉卡住了的用户。",
+                "sfbt": "焦点解决短期治疗 (SFBT): 不深究问题根源，而是聚焦于用户的目标、已有资源和成功经验，快速构建解决方案。适合目标导向、希望寻找具体、积极改变方法的用户。"
+            }
+        }
+    }
+}
+
+@app.route('/api/interview/analyze', methods=['POST'])
+def analyze_interview():
+    """第二个智能体：分析访谈结果（从数据库读取对话历史）"""
+    data = request.json
+    username = data.get('username')  # 必需参数：用户名
+    client_info = data.get('client_info', {})
+    
+    if not username:
+        return jsonify({"error": "需要提供用户名以获取对话历史"}), 400
+    
+    try:
+        # 从数据库获取用户的完整对话历史
+        all_data = read_data()
+        
+        if username not in all_data['interview_sessions']:
+            return jsonify({"error": "未找到该用户的访谈会话"}), 404
+        
+        session = all_data['interview_sessions'][username]
+        history = session['messages']
+        
+        if not history:
+            return jsonify({"error": "访谈会话为空"}), 400
+        
+        # 检查是否有足够的对话内容进行分析
+        if len(history) < 5:  # 至少需要几轮对话
+            return jsonify({
+                "error": "对话内容不足，无法进行分析",
+                "message_count": len(history),
+                "session_status": session.get('status', 'unknown')
+            }), 400
+        
+        # 构建分析系统提示
+        analysis_prompt = f"""
+{SYSTEM_PROMPT_ANALYSIS['prompt_instructions']['role_definition']['persona']}
+
+核心任务：
+{SYSTEM_PROMPT_ANALYSIS['prompt_instructions']['role_definition']['objective']}
+
+输入格式：
+{SYSTEM_PROMPT_ANALYSIS['prompt_instructions']['input_format']['content']}
+
+请严格按照以下结构生成分析报告：
+
+标题：{SYSTEM_PROMPT_ANALYSIS['prompt_instructions']['output_structure']['title']}
+
+引言：
+{SYSTEM_PROMPT_ANALYSIS['prompt_instructions']['output_structure']['introduction']}
+
+{SYSTEM_PROMPT_ANALYSIS['prompt_instructions']['output_structure']['part_1_summary']['title']}
+{SYSTEM_PROMPT_ANALYSIS['prompt_instructions']['output_structure']['part_1_summary']['content']}
+
+{SYSTEM_PROMPT_ANALYSIS['prompt_instructions']['output_structure']['part_2_multidimensional_analysis']['title']}
+{SYSTEM_PROMPT_ANALYSIS['prompt_instructions']['output_structure']['part_2_multidimensional_analysis']['description']}
+
+2.1 {SYSTEM_PROMPT_ANALYSIS['prompt_instructions']['output_structure']['part_2_multidimensional_analysis']['sections']['emotional_state']}
+
+2.2 {SYSTEM_PROMPT_ANALYSIS['prompt_instructions']['output_structure']['part_2_multidimensional_analysis']['sections']['cognitive_patterns']}
+
+2.3 {SYSTEM_PROMPT_ANALYSIS['prompt_instructions']['output_structure']['part_2_multidimensional_analysis']['sections']['behavioral_patterns']}
+
+2.4 {SYSTEM_PROMPT_ANALYSIS['prompt_instructions']['output_structure']['part_2_multidimensional_analysis']['sections']['somatic_symptoms']}
+
+2.5 {SYSTEM_PROMPT_ANALYSIS['prompt_instructions']['output_structure']['part_2_multidimensional_analysis']['sections']['social_functioning']}
+
+{SYSTEM_PROMPT_ANALYSIS['prompt_instructions']['output_structure']['part_3_synthesis_and_interpretation']['title']}
+{SYSTEM_PROMPT_ANALYSIS['prompt_instructions']['output_structure']['part_3_synthesis_and_interpretation']['content']}
+
+{SYSTEM_PROMPT_ANALYSIS['prompt_instructions']['output_structure']['part_4_therapeutic_recommendations']['title']}
+{SYSTEM_PROMPT_ANALYSIS['prompt_instructions']['output_structure']['part_4_therapeutic_recommendations']['introduction']}
+
+{SYSTEM_PROMPT_ANALYSIS['prompt_instructions']['output_structure']['part_4_therapeutic_recommendations']['recommendation_structure']}
+
+流派推荐格式：
+{SYSTEM_PROMPT_ANALYSIS['prompt_instructions']['output_structure']['part_4_therapeutic_recommendations']['item_template']['name']}
+{SYSTEM_PROMPT_ANALYSIS['prompt_instructions']['output_structure']['part_4_therapeutic_recommendations']['item_template']['description']}
+{SYSTEM_PROMPT_ANALYSIS['prompt_instructions']['output_structure']['part_4_therapeutic_recommendations']['item_template']['suitability_analysis']}
+
+可参考的咨询流派：
+1. {SYSTEM_PROMPT_ANALYSIS['prompt_instructions']['therapist_recommendation_logic']['knowledge_base']['cbt']}
+2. {SYSTEM_PROMPT_ANALYSIS['prompt_instructions']['therapist_recommendation_logic']['knowledge_base']['psychodynamic']}
+3. {SYSTEM_PROMPT_ANALYSIS['prompt_instructions']['therapist_recommendation_logic']['knowledge_base']['person_centered']}
+4. {SYSTEM_PROMPT_ANALYSIS['prompt_instructions']['therapist_recommendation_logic']['knowledge_base']['act']}
+5. {SYSTEM_PROMPT_ANALYSIS['prompt_instructions']['therapist_recommendation_logic']['knowledge_base']['sfbt']}
+
+{SYSTEM_PROMPT_ANALYSIS['prompt_instructions']['output_structure']['final_disclaimer']['title']}
+{SYSTEM_PROMPT_ANALYSIS['prompt_instructions']['output_structure']['final_disclaimer']['content']}
+
+分析原则：
+- {SYSTEM_PROMPT_ANALYSIS['prompt_instructions']['analytical_principles']['text_based_evidence']}
+- {SYSTEM_PROMPT_ANALYSIS['prompt_instructions']['analytical_principles']['empathetic_tone']}
+- {SYSTEM_PROMPT_ANALYSIS['prompt_instructions']['analytical_principles']['strengths_focus']}
+- {SYSTEM_PROMPT_ANALYSIS['prompt_instructions']['analytical_principles']['professionalism']}
+"""
+        
+        # 构建用户对话内容
+        conversation_text = "\n".join([
+            f"{'用户' if item['sender'] == 'user' else '智能体'}: {item['text']}" 
+            for item in history
+        ])
+        
+        user_prompt = f"""
+访谈会话信息：
+- 用户名：{username}
+- 会话开始时间：{session.get('created_at', '未知')}
+- 会话完成时间：{session.get('updated_at', '未知')}
+
+基础信息（如有）：
+{json.dumps(client_info, indent=2, ensure_ascii=False) if client_info else "无"}
+
+完整访谈对话记录：
+---
+{conversation_text}
+---
+
+请基于以上对话内容，生成结构化的心理状态分析报告。
+"""
+
+        # 调用AI分析
+        api_key = os.environ.get('GEMINI_API_KEY')
+        if not api_key:
+            raise ValueError("GEMINI_API_KEY environment variable is not set")
+            
+        client = genai.Client(api_key=api_key)
+        
+        response = client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=analysis_prompt + "\n\n" + user_prompt,
+            config=types.GenerateContentConfig(
+                thinking_config=types.ThinkingConfig(thinking_budget=-1)
+            )
+        )
+        
+        # 保存分析结果到会话数据中
+        all_data['interview_sessions'][username]['analysis_report'] = response.text
+        all_data['interview_sessions'][username]['analysis_completed_at'] = time.strftime("%Y-%m-%d %H:%M:%S")
+        write_data(all_data)
+        
+        return jsonify({
+            "status": "success",
+            "analysis_completed": True,
+            "analysis_report": response.text,
+            "analyzed_messages": len(history),
+            "session_id": session['session_id'],
+            "timestamp": time.strftime("%Y-%m-%d %H:%M:%S")
+        })
+        
+    except Exception as e:
+        app.logger.error(f"访谈分析过程中出错: {e}")
+        return jsonify({"error": f"分析失败: {str(e)}"}), 500
+
+@app.route('/api/interview/status', methods=['POST'])
+def check_interview_status():
+    """检查访谈状态和是否可以进行分析（从数据库读取）"""
+    data = request.json
+    username = data.get('username')
+    
+    if not username:
+        return jsonify({"error": "需要提供用户名"}), 400
+    
+    try:
+        all_data = read_data()
+        
+        if username not in all_data['interview_sessions']:
+            return jsonify({
+                "has_closing_message": False,
+                "user_message_count": 0,
+                "can_generate_report": False,
+                "next_step": "start_interview",
+                "session_exists": False
+            })
+        
+        session = all_data['interview_sessions'][username]
+        history = session['messages']
+        has_closing, user_message_count = check_closing_message(history)
+        
+        return jsonify({
+            "has_closing_message": has_closing,
+            "user_message_count": user_message_count,
+            "can_generate_report": has_closing,
+            "next_step": "generate_report" if has_closing else "continue_interview",
+            "session_exists": True,
+            "session_status": session.get('status', 'active'),
+            "analysis_ready": session.get('analysis_ready', False),
+            "has_analysis_report": 'analysis_report' in session
+        })
+        
+    except Exception as e:
+        app.logger.error(f"检查访谈状态时出错: {e}")
+        return jsonify({"error": f"状态检查失败: {str(e)}"}), 500
 
 # --- 前端文件服务路由 ---
-@app.route('/', defaults={'path': ''})
+@app.route('/')
+def serve_home():
+    return send_from_directory(app.static_folder, 'index.html')
+
 @app.route('/<path:path>')
 def serve_frontend(path):
     if path != "" and os.path.exists(os.path.join(app.static_folder, path)):
